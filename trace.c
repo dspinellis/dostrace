@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991, 1993 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.22 1993/01/12 23:08:46 dds Exp $
+ * $Id: trace.c,v 1.23 1993/01/29 16:19:27 dds Exp $
  *
  */
 
@@ -20,9 +20,10 @@
 #include <time.h>
 #include <signal.h>
 #include <bios.h>
+#include <errno.h>
 
 #ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.22 1993/01/12 23:08:46 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.23 1993/01/29 16:19:27 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -32,9 +33,10 @@ static char rcsid[] = "$Id: trace.c,v 1.22 1993/01/12 23:08:46 dds Exp $";
  */
 static stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
 static timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint;
-static branchprint;
+static branchprint, append;
 static unsigned datalen = 15;
 static someprefix;
+static char *fname = "trace.log";
 
 static mypsp, tracedpsp;		/* PSP of us and traced program */
 static execed;				/* True after we run */
@@ -653,6 +655,14 @@ dos_handler(
 		_chain_intr(old_dos_handler);
 	}
 	setpsp(mypsp);
+	if (append) {
+		close(fd);
+		if ((fd = open(fname, O_TEXT | O_APPEND | O_WRONLY, 0666)) == -1) {
+			fd = 1;
+			tprintf("ERROR %s \r\n", sys_errlist[errno]);
+		}
+		lseek(fd, 0l, SEEK_END);
+	}
 	switch (fun) {
 	case 0x02:				/* disp_out */
 		prefix();
@@ -1548,11 +1558,10 @@ main(int argc, char *argv[])
 	int status = 0;
 	extern int optind;
 	extern char *optarg;
-	char *fname = "trace.log";
 	int errflag = 0;
-	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwx] [-p psp] [command options ...]\n";
+	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.22 $", revision[30];
+	static char revstring[] = "$Revision: 1.23 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
@@ -1566,7 +1575,7 @@ main(int argc, char *argv[])
 		*p = '\0';
 	if (!*argv[0])
 		argv[0] = "trace";
-	while ((c = getopt(argc, argv, "abfo:h:sxl:nitrevcp:w")) != EOF)
+	while ((c = getopt(argc, argv, "abfo:h:sxl:nitrevcp:wy")) != EOF)
 		switch (c) {
 		case 'i':			/* Print PSP */
 			pspprint = 1;
@@ -1615,6 +1624,9 @@ main(int argc, char *argv[])
 		case 's':			/* Print strings in I/O */
 			stringprint = 1;
 			break;
+		case 'y':			/* Close file after every write */
+			append = 1;
+			break;
 		case 'x':			/* Print binary data in I/O */
 			hexprint = 1;
 			break;
@@ -1656,6 +1668,7 @@ main(int argc, char *argv[])
 			fputs("-v\tVerbose (-abefinrstwx)\n", stdout);
 			fputs("-w\tPrint errors as words\n", stdout);
 			fputs("-x\tPrint I/O binary data (needs -s)\n", stdout);
+			fputs("-y\tClose file after everY write\n", stdout);
 			return 0;
 		case '?':			/* Error */
 			errflag = 1;
