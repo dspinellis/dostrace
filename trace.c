@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.7 1991/01/20 17:35:39 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.8 1991/01/20 17:46:30 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.7 1991/01/20 17:35:39 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.8 1991/01/20 17:46:30 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump;
@@ -1061,11 +1061,14 @@ main(int argc, char *argv[])
 	extern char *optarg;
 	char *fname = "trace.log";
 	int errflag = 0;
-	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-rsoxn] command options ...\n";
+	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxn] command options ...\n";
 	int c;
 
-	while ((c = getopt(argc, argv, "f:h:sxol:nr")) != EOF)
+	while ((c = getopt(argc, argv, "f:h:sxol:nrv")) != EOF)
 		switch (c) {
+		case 'v':
+			regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			break;
 		case 'r':			/* Dump registers */
 			regdump = 1;
 			break;
@@ -1097,6 +1100,7 @@ main(int argc, char *argv[])
 			fputs("-o\tTrace other functions\n", stderr);
 			fputs("-n\tPrint other functions by name\n", stderr);
 			fputs("-r\tDump registers on other functions\n", stderr);
+			fputs("-v\tVerbose (-sxonr)\n", stderr);
 			fputs("-h\tPrint this message\n", stderr);
 			return 0;
 		case '?':			/* Error */
