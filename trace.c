@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.11 1991/02/25 19:17:29 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.12 1991/02/25 19:26:11 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.11 1991/02/25 19:17:29 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.12 1991/02/25 19:26:11 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
@@ -62,15 +62,22 @@ tputs(char *s)
 	}
 }
 
+int _doprnt(char *fmt, va_list marker, FILE *f);
+
 int
 tprintf(char *fmt, ...)
 {
 	va_list marker;
 	int result;
 	static char msg[200];
+	static FILE f;
 
+	f._ptr = f._base = msg;
+	f._cnt = 32000;
+	f._flag = _IOWRT | _IOFBF;
 	va_start(marker, fmt);
-	result = vsprintf(msg, fmt, marker);
+	result = _doprnt(fmt, marker, &f);
+	*f._ptr = '\0';
 	va_end(marker);
 	tputs(msg);
 	return result;
