@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.6 1991/01/20 16:35:53 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.7 1991/01/20 17:35:39 dds Exp $
  *
  */
 
@@ -19,13 +19,13 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.6 1991/01/20 16:35:53 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.7 1991/01/20 17:35:39 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump;
 static unsigned datalen = 15;
 
-static mypsp;
+static mypsp, tracedpsp;
 static char _far *critsectflag;
 static char _far *criterrflag;
 
@@ -245,6 +245,77 @@ getcritsectflag(void)
 	return makefptr(sseg, soff);
 }
 
+static void _far *
+getdta(void)
+{
+	unsigned sseg, soff;
+
+	_asm mov ah, 2fh
+	_asm int 21h
+	_asm mov ax, es
+	_asm mov sseg, ax
+	_asm mov soff, bx
+	return makefptr(sseg, soff);
+}
+
+static void
+outmode(unsigned mode)
+{
+	char *p = buff;
+
+	*p++ = '[';
+	if (mode & 0x20) *p++ = 'a'; else *p++ = '-';
+	if (mode & 0x10) *p++ = 'd'; else *p++ = '-';
+	if (mode & 0x08) *p++ = 'v'; else *p++ = '-';
+	if (mode & 0x04) *p++ = 's'; else *p++ = '-';
+	if (mode & 0x02) *p++ = 'h'; else *p++ = '-';
+	if (mode & 0x01) *p++ = 'r'; else *p++ = '-';
+	*p++ = ']';
+	*p++ = '\0';
+	outstring(buff);
+}
+
+/*
+ * Print the DTA contents as filled by the find first / find next functions
+ */
+static void
+outdta(void)
+{
+	struct s_dta {
+		char reserve[21];
+		unsigned char mode;
+		unsigned short time;
+		unsigned short date;
+		long size;
+		char name[13];
+	} _far *d;
+	int psp;
+
+	psp = getpsp();
+	setpsp(tracedpsp);
+	d = getdta();
+	setpsp(psp);
+	outstring("ok\t(");
+	outfstring(d->name);
+	outstring(", ");
+	outdec(d->size);
+	outstring(", ");
+	outdec((d->date >> 9) + 80);
+	outstring("/");
+	outdec((d->date >> 5) & 0xf);
+	outstring("/");
+	outdec(d->date & 0x1f);
+	outstring(", ");
+	outdec(d->time >> 11);
+	outstring(":");
+	outdec((d->time >> 5) & 0x3f);
+	outstring(".");
+	outdec(d->time & 0x1f);
+	outstring(", ");
+	outmode(d->mode);
+	outstring(")\r\n");
+}
+
 static void
 okerrorproc(unsigned flags, unsigned ax)
 {
@@ -295,15 +366,15 @@ char *funcs[] =
 	"wr_seq_rec",		/* 15H	DOS1 - WRITE SEQUENTIAL RECORD */
 	"create_file",		/* 16H	DOS1 - CREATE FILE */
 	"rename_file",		/* 17H	DOS1 - RENAME FILE */
-	"reserved",		/* 18h */
+	"reserved 0x18",	/* 18h */
 	"rd_cur_drive",		/* 19H	DOS1 - REPORT CURRENT DRIVE */
 	"set_dta",		/* 1AH	DOS1 - SET DISK TRANSFER AREA FUCNTION */
 	"rd_fat_1",		/* 1BH	DOS1 - READ CURRENT DRIVE'S FAT */
 	"rd_fat_2",		/* 1CH	DOS1 - READ ANY DRIVE'S FAT */
-	"reserved",		/* 1dh */
-	"reserved",		/* 1eh */
-	"reserved",		/* 1fh */
-	"reserved",		/* 20h */
+	"reserved 0x1d",	/* 1dh */
+	"reserved 0x1e",	/* 1eh */
+	"reserved 0x1f",	/* 1fh */
+	"reserved 0x20",	/* 20h */
 	"rd_ran_rec1",		/* 21H	DOS1 - READ RANDOM FILE RECORD */
 	"wr_ran_rec1",		/* 22H	DOS1 - WRITE RANDOM FILE RECORD */
 	"rd_file_size",		/* 23H	DOS1 - REPORT FILE SIZE */
@@ -321,7 +392,7 @@ char *funcs[] =
 	"get_dta",		/* 2FH	DOS2 - GET DISK TRANSFER AREA ADDRESS */
 	"get_ver",		/* 30H	DOS2 - GET DOS VERSION NUMBER */
 	"keep",			/* 31H	DOS2 - ADVANCED TERMINATE BUT STAY RESIDENT */
-	"reserved",		/* 32h */
+	"reserved 0x32",	/* 32h */
 	"cntrl_brk",		/* 33H	DOS2 - GET/SET CONTROL BREAK STATUS */
 	"critical_flag",	/* 34h */
 	"get_int_vec",		/* 35H	DOS2 - GET INTERRUPT VECTOR */
@@ -354,9 +425,9 @@ char *funcs[] =
 	"set_psp",		/* 50h */
 	"get_psp",		/* 51h */
 	"get_handle_addr",	/* 52h */
-	"reserved",		/* 53h */
+	"reserved 0x53",	/* 53h */
 	"get_verify",		/* 54H	DOS2 - GET FILE WRITE VERIFY STATE */
-	"reserved",		/* 55h */
+	"reserved 0x55",	/* 55h */
 	"rename",		/* 56H	DOS2 - RENAME FILE */
 	"date_time",		/* 57H	DOS2 - GET/SET FILE DATE/TIME */
 	"alloc_strategy",	/* 58h */
@@ -364,11 +435,11 @@ char *funcs[] =
 	"create_temp",		/* 5AH	DOS3 - CREATE TEMPORARY FILE */
 	"create_new",		/* 5BH	DOS3 - CREATE NEW FILE */
 	"file_lock",		/* 5CH	DOS3 - LOCK/UNLOCK FILE ACCESS */
-	"reserved",		/* 5dh */
+	"reserved 0x5d",	/* 5dh */
 	"machine_name",		/* 5eh */
 	"assign_list",		/* 5fh */
-	"reserved",		/* 60h */
-	"reserved",		/* 61h */
+	"reserved 0x60",	/* 60h */
+	"reserved 0x61",	/* 61h */
 	"get_psp",		/* 62H	DOS3 - GET PROGRAM SEGMENT PREFIX ADDRESS */
 };
 
@@ -391,13 +462,12 @@ dos_handler(
 {
 	static recurse;
 	static firstexec;
-	int psp;
 	int fun;
 
 	if (recurse || *critsectflag || *criterrflag)
 		_chain_intr(old_dos_handler);
 	recurse = 1;
-	psp = getpsp();
+	tracedpsp = getpsp();
 	setpsp(mypsp);
 	switch (fun = (_ax >> 8)) {
 	case 0x39:				/* Mkdir */
@@ -411,7 +481,7 @@ dos_handler(
 	stringfun:
 		outso(_ds, _dx);
 		outstring("\") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -442,8 +512,10 @@ dos_handler(
 		outso(_ds, _dx);
 		outstring("\", ");
 		outhex(_cx);
+		if (stringprint)
+			outmode(_cx);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -471,7 +543,7 @@ dos_handler(
 		outstring("\", ");
 		outdec(_ax & 0xff);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -496,7 +568,7 @@ dos_handler(
 		outstring("close(");
 		outdec(_bx);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -527,7 +599,7 @@ dos_handler(
 		outstring(", ");
 		outdec(_cx);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -567,7 +639,7 @@ dos_handler(
 		outstring(", ");
 		outdec(_ax & 0xff);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -604,9 +676,11 @@ dos_handler(
 		if (_ax & 0xff == 1) {
 			outstring("\", ");
 			outhex(_cx);
+			if (stringprint)
+				outmode(_cx);
 		}
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -632,9 +706,11 @@ dos_handler(
 			outstring("Error ");
 			outdec(_ax);
 		} else {
-			if (_ax & 0xff == 0)
+			if (_ax & 0xff == 0) {
 				outdec(_cx);
-			else
+				if (stringprint)
+					outmode(_cx);
+			} else
 				outstring("ok");
 		}
 		outstring("\r\n");
@@ -643,7 +719,7 @@ dos_handler(
 		outstring("dup(");
 		outdec(_bx);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -666,7 +742,7 @@ dos_handler(
 		outstring(", ");
 		outdec(_cx);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -692,7 +768,7 @@ dos_handler(
 		outstring(":");
 		outhex(_si);
 		outstring(") = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push ds
@@ -730,7 +806,7 @@ dos_handler(
 		outstring("alloc(");
 		outhex(_bx);
 		outstring("0) = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -762,7 +838,7 @@ dos_handler(
 		outstring("free(");
 		outhex(_es);
 		outstring(":0) = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push es
@@ -788,7 +864,7 @@ dos_handler(
 		outstring(":0, ");
 		outhex(_bx);
 		outstring("0) = ");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			push es
@@ -830,7 +906,7 @@ dos_handler(
 		outstring("exit(");
 		outdec(_ax & 0xff);
 		outstring(")\r\n");
-		setpsp(psp);
+		setpsp(tracedpsp);
 		_asm {
 			pushf
 			mov ax, _flags
@@ -843,6 +919,102 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
+		break;
+	case 0x4e:				/* Findfirst */
+		outstring("findfirst(\"");
+		outso(_ds, _dx);
+		outstring("\", ");
+		outhex(_cx);
+		if (stringprint)
+			outmode(_cx);
+		outstring(") = ");
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			push ds
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov cx, _cx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop ds
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+			outstring("\r\n");
+		} else {
+			if (stringprint)
+				outdta();
+			else
+				outstring("ok\r\n");
+		}
+		break;
+	case 0x4f:				/* Findnext */
+		outstring("findnext() = ");
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+			outstring("\r\n");
+		} else {
+			if (stringprint)
+				outdta();
+			else
+				outstring("ok\r\n");
+		}
+		break;
+	case 0x5a:				/* Tmpfile */
+		outstring("tmpfile(\"");
+		outso(_ds, _dx);
+		outstring("\", ");
+		outhex(_cx & 0xff);
+		outstring(") = ");
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			push ds
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov cx, _cx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop ds
+			popf
+		}
+		nerrorproc(_flags, _ax);
 		break;
 	aka_default:
 	default:
@@ -871,11 +1043,11 @@ dos_handler(
 			}
 			outstring("\r\n");
 		}
-		setpsp(psp);
+		setpsp(tracedpsp);
 		recurse = 0;
 		_chain_intr(old_dos_handler);
 	}
-	setpsp(psp);
+	setpsp(tracedpsp);
 	recurse = 0;
 }
 
