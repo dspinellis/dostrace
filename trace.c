@@ -1,9 +1,9 @@
 /*
  * trace - trace DOS system calls
  *
- * (C) Copyright 1991-1993 Diomidis Spinellis.  All rights reserved.
+ * (C) Copyright 1991-1994 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.26 1993/02/03 15:49:46 dds Exp $
+ * $Id: trace.c,v 1.27 1994/02/06 10:02:59 dds Exp $
  *
  */
 
@@ -23,7 +23,7 @@
 #include <errno.h>
 
 #ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.26 1993/02/03 15:49:46 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.27 1994/02/06 10:02:59 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -701,7 +701,7 @@ dos_handler(
 		tputs("flush()\r\n");
 		break;
 	case 0x0e:				/* set_current_disk */
-		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) + 'A');
+		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) < 27 ? (_dx & 0xff) + 'A' : '.');
 		break;
 	case 0x19:				/* get_current_disk */
 		break;
@@ -788,7 +788,7 @@ dos_handler(
 			goto aka_default;
 		}
 		tprintf("%Fs", makefptr(_ds, _dx));
-		if (_ax & 0xff == 1)
+		if ((_ax & 0xff) == 1)
 			tprintf("\", %#x%s", _cx, strmode(_cx));
 		tputs(") = ");
 		break;
@@ -1035,7 +1035,7 @@ dos_handler(
 		tprintf("get_time() = %02d:%02d:%02d.%d\r\n", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
 		break;
 	case 0x2d:				/* set_time */
-		if (_ax & 0xff == 0)
+		if ((_ax & 0xff) == 0)
 			tputs("ok\r\n");
 		else
 			tputs("invalid\r\n");
@@ -1099,7 +1099,7 @@ dos_handler(
 		if (_flags & 1)
 			errprint(_ax);
 		else {
-			if (_ax & 0xff == 0)
+			if ((_ax & 0xff) == 0)
 				tprintf("%u%s", _cx, strmode(_cx));
 			else
 				tputs("ok");
@@ -1333,7 +1333,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.26 $", revision[30];
+	static char revstring[] = "$Revision: 1.27 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
@@ -1421,7 +1421,7 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'h':			/* Help */
-			fprintf(stdout, "Trace Version %s (C) Copyright 1991-1993 D. Spinellis.  All rights reserved.\n", revision);
+			fprintf(stdout, "Trace Version %s (C) Copyright 1991-1994 D. Spinellis.  All rights reserved.\n", revision);
 			fprintf(stdout, usagestring, argv[0]);
 			fputs("-a\tTrace all DOS functions\n", stdout);
 			fputs("-b\tPrint interrupt branch address\n", stdout);
