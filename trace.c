@@ -1,9 +1,9 @@
 /*
  * trace - trace DOS system calls
  *
- * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
+ * (C) Copyright 1991, 1993 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.19 1991/08/03 12:58:56 dds Exp $
+ * $Id: trace.c,v 1.20 1993/01/08 17:00:52 dds Exp $
  *
  */
 
@@ -22,7 +22,7 @@
 #include <bios.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.19 1991/08/03 12:58:56 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.20 1993/01/08 17:00:52 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -45,7 +45,7 @@ static char _far *criterrflag;		/* DOS citical error flag */
 #define DOS_INT	0x21
 
 /* Old dos handler to chain to */
-static void (_interrupt _far _cdecl *old_dos_handler)( void );
+static void (_interrupt _far _cdecl *old_dos_handler)();
 
 /* Output file descriptor */
 static int fd;
@@ -1554,7 +1554,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwx] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.19 $", revision[30];
+	static char revstring[] = "$Revision: 1.20 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
@@ -1681,7 +1681,6 @@ main(int argc, char *argv[])
 	/* Save old handler and install new one */
 	old_dos_handler = _dos_getvect(DOS_INT);
 	(void)signal(SIGABRT, restore_handler);
-	(void)signal(SIGBREAK, restore_handler);
 	(void)signal(SIGINT, restore_handler);
 	(void)signal(SIGTERM, restore_handler);
 	_dos_setvect(DOS_INT, dos_handler);
