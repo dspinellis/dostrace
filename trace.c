@@ -1,9 +1,9 @@
 /*
  * trace - trace DOS system calls
  *
- * (C) Copyright 1991, 1993 Diomidis Spinellis.  All rights reserved.
+ * (C) Copyright 1991-1993 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.23 1993/01/29 16:19:27 dds Exp $
+ * $Id: trace.c,v 1.24 1993/02/03 12:29:53 dds Exp $
  *
  */
 
@@ -23,7 +23,7 @@
 #include <errno.h>
 
 #ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.23 1993/01/29 16:19:27 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.24 1993/02/03 12:29:53 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -453,7 +453,6 @@ errprintln(int err)
 static void
 okerrorproc(unsigned flags, unsigned ax)
 {
-	setpsp(mypsp);
 	if (flags & 1)
 		errprintln(ax);
 	else
@@ -466,7 +465,6 @@ okerrorproc(unsigned flags, unsigned ax)
 static void
 nerrorproc(unsigned flags, unsigned ax)
 {
-	setpsp(mypsp);
 	if (flags & 1)
 		errprintln(ax);
 	else
@@ -598,7 +596,7 @@ struct s_func {
  * Print any prefixes specified by the user before the actual function call.
  */
 static void
-prefixfun(int fun, unsigned cs, unsigned ip)
+prefix(int fun, unsigned cs, unsigned ip)
 {
 	if (timeprint)
 		print_time();
@@ -610,7 +608,6 @@ prefixfun(int fun, unsigned cs, unsigned ip)
 		tprintf("%04X:%04X ", cs, ip - 2);
 }
 
-#define prefix() do { if (someprefix) prefixfun(fun, _cs, _ip); } while (0)
 
 /* 
  * The new DOS interrupt handler 
@@ -663,372 +660,288 @@ dos_handler(
 		}
 		lseek(fd, 0l, SEEK_END);
 	}
+	if (someprefix)
+		prefix(fun, _cs, _ip);
 	switch (fun) {
 	case 0x02:				/* disp_out */
-		prefix();
 		tprintf("display_char('%c')\r\n", _dx & 0xff);
-		goto norm_proc;
+		break;
 	case 0x06:				/* direct_out */
-		prefix();
 		tprintf("direct_out('%c')\r\n", _dx & 0xff);
-		goto norm_proc;
+		break;
 	case 0x09:				/* disp_string */
-		prefix();
 		if (stringprint)
 			tprintf("display(\"%s\")\r\n", makestring(_ds, _dx));
 		else
 			tprintf("display(%04X:%04X)\r\n", _ds, _dx);
-		goto norm_proc;
+		break;
 	case 0x0e:				/* set_current_disk */
-		prefix();
 		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) + 'A');
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
+		break;
+	case 0x19:				/* get_current_disk */
+		break;
+	case 0x1a:				/* set_dta */
+		tprintf("set_dta(%04X:%04X)\r\n", _ds, _dx);
+		break;
+	case 0x25:				/* set_vector */
+		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
+		break;
+	case 0x2a:				/* get_date */
+		break;
+	case 0x2c:				/* get_time */
+		break;
+	case 0x2d:				/* set_time */
+		tprintf("set_time(%02d:%02d:%02d.%d) = ", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
+		break;
+	case 0x2f:				/* get_dta */
+		tprintf("get_dta() = %04X:%04X\r\n", _es, _bx);
+		break;
+	case 0x30:				/* get_version */
+		tprintf("get_version() = %u.%u\r\n", _ax & 0xff, _ax >> 8);
+		break;
+	case 0x33:				/* cntrl_brk */
+		switch (_ax & 0xff) {
+		case 0:
+			break;
+		case 1:
+			tprintf("set_break(%s)\r\n", makeonoff(_dx & 0xff));
+			break;
+		default:
+			break;
 		}
-		setpsp(mypsp);
+		break;
+	case 0x35:				/* get_vector */
+		tprintf("get_vector(%#x) = ", _ax & 0xff);
+		break;
+	case 0x39:				/* Mkdir */
+		tprintf("mkdir(\"%Fs\") = ", makefptr(_ds, _dx));
+		break;
+	case 0x3a:				/* Rmdir */
+		tprintf("rmdir(\"%Fs\") = ", makefptr(_ds, _dx));
+		break;
+	case 0x3b:				/* Chdir */
+		tprintf("chdir(\"%Fs\") = ", makefptr(_ds, _dx));
+		break;
+	case 0x3c:				/* Creat */
+		tprintf("creat(\"%Fs\", %02x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
+		break;
+	case 0x3d:				/* Open */
+		tprintf("open(\"%Fs\", %d) = ", makefptr(_ds, _dx), _ax & 0xff);
+		break;
+	case 0x3e:				/* Close */
+		tprintf("close(%u) = ", _bx);
+		break;
+	case 0x3f:				/* Read */
+		tprintf("read(%u, %04X:%04X, %u) = ", _bx, _ds, _dx, _cx);
+		break;
+	case 0x40:				/* Write */
+		tprintf("write(%u, %04X:%04X, %u) = ", _bx, _ds, _dx, _cx);
+		break;
+	case 0x41:				/* Unlink */
+		tprintf("chdir(\"%Fs\") = ", makefptr(_ds, _dx));
+		break;
+	case 0x42:				/* Lseek */
+		tprintf("lseek(%u, %ld, %d) = ",_bx, makelong(_cx, _dx), _ax & 0xff);
+		break;
+	case 0x43:				/* Chmod / getmod */
+		switch (_ax & 0xff) {
+		case 0:
+			tputs("getmod(\"");
+			break;
+		case 1:
+			tputs("chmod(\"");
+			break;
+		default:
+			goto aka_default_1;
+		}
+		tprintf("%Fs", makefptr(_ds, _dx));
+		if (_ax & 0xff == 1)
+			tprintf("\", %#x%s", _cx, strmode(_cx));
+		tputs(") = ");
+		break;
+	case 0x44:				/* ioctl */
+		switch (_ax & 0xff) {
+		default:
+			goto aka_default_1;
+		case 0x00:			/* get device info */
+			tprintf("ioctl(GET_DEV_INFO, %d) = ", _bx);
+			break;
+		}
+		break;
+	case 0x45:				/* Dup */
+		tprintf("dup(%u) = ", _bx);
+		break;
+	case 0x46:				/* Dup2 */
+		tprintf("dup2(%u, %u) = ", _bx, _cx);
+		break;
+	case 0x47:				/* Getcwd */
+		tprintf("getcwd(%d, %04X:%04X) = ", _dx & 0xff, _ds, _si);
+		break;
+	case 0x48:				/* Alloc */
+		tprintf("alloc(%#x0)= ", _bx);
+		break;
+	case 0x49:				/* Free */
+		tprintf("free(%04X:0000) = ", _es);
+		break;
+	case 0x4a:				/* Realloc */
+		tprintf("realloc(%04X:0000, %#x0) = ", _es, _bx);
+		break;
+	case 0x4b:				/* Exec */
+		tprintf("exec(\"%Fs", makefptr(_ds, _dx));
+		if (tracechildren)
+			tputs("\") = ...\r\n");
+		else
+			tputs("\") = ");
+		if (tracechildren) {
+			trace = 1;
+			setpsp(tracedpsp);
+			_chain_intr(old_dos_handler);
+		}
+		break;
+	case 0x4c:				/* Exit */
+		tprintf("exit(%d)\r\n", _ax & 0xff);
+		if (tracechildren) {
+			trace = 1;
+			setpsp(tracedpsp);
+			_chain_intr(old_dos_handler);
+		}
+		break;
+	case 0x4e:				/* Findfirst */
+		tprintf("findfirst(\"%Fs\", %#x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
+		break;
+	case 0x4f:				/* Findnext */
+		tputs("findnext() = ");
+		break;
+	case 0x50:				/* set_psp */
+		tprintf("set_psp(%04X)\r\n", _bx);
+		break;
+	case 0x51:				/* get_psp */
+	case 0x62:				/* get_psp */
+		break;
+	case 0x55:				/* Create child PSP */
+		tprintf("child_psp(%04X, %04X) = ", _dx, _si);
+		break;
+	case 0x5a:				/* Tmpfile */
+		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx), _cx & 0xff);
+		break;
+	aka_default_1:
+	default:
+		if (otherprint) {
+			if (nameprint && fun <= 0x62)
+				tputs(funcs[fun].name);
+			else
+				tprintf("%02x", fun);
+			if (regdump)
+				tprintf(" :ax=%04X bx=%04X cx=%04X dx=%04X si=%04X di=%04X ds=%04X es=%04X\r\n", _ax, _bx, _cx, _dx, _si, _di, _ds, _es);
+			else
+				tputs("\r\n");
+		}
+		setpsp(tracedpsp);
+		trace = 1;
+		_chain_intr(old_dos_handler);
+	}
+	setpsp(tracedpsp);
+	_asm {
+		pushf
+		push ds
+		mov ax, _flags
+		push ax
+		popf
+		mov ax, _es
+		mov es, ax
+		mov ax, _ds
+		mov ds, ax
+		mov ax, _ax
+		mov bx, _bx
+		mov cx, _cx
+		mov dx, _dx
+		mov si, _si
+		mov di, _di
+		int 21h
+		mov _ax, ax
+		mov _bx, bx
+		mov _cx, cx
+		mov _dx, dx
+		mov _si, si
+		mov _di, di
+		mov ax, es
+		mov _es, ax
+		mov ax, ds
+		mov es, ax
+		pushf
+		pop ax
+		mov _flags, ax
+		pop ds
+		popf
+	}
+	setpsp(mypsp);
+	switch (fun) {
+	case 0x02:				/* disp_out */
+		break;
+	case 0x06:				/* direct_out */
+		break;
+	case 0x09:				/* disp_string */
+		break;
+	case 0x0e:				/* set_current_disk */
 		tprintf("%d\r\n", _ax & 0xff);
 		break;
 	case 0x19:				/* get_current_disk */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_current_disk() = %c:\r\n", (_ax & 0xff) + 'A');
 		break;
 	case 0x1a:				/* set_dta */
-		prefix();
-		tprintf("set_dta(%04X:%04X)\r\n", _ds, _dx);
-		goto norm_proc;
+		break;
 	case 0x25:				/* set_vector */
-		prefix();
-		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
-		goto norm_proc;
+		break;
 	case 0x2a:				/* get_date */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			mov _cx, cx
-			mov _dx, dx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_date() = %2u/%2u/%2u (%s)\r\n", _cx, _dx >> 8,  _dx & 0xff, weekday(_ax & 0xff));
 		break;
 	case 0x2c:				/* get_time */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			mov _cx, cx
-			mov _dx, dx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_time() = %02d:%02d:%02d.%d\r\n", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
 		break;
 	case 0x2d:				/* set_time */
-		prefix();
-		tprintf("set_time(%02d:%02d:%02d.%d) = ", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov cx, _cx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		if (_ax & 0xff == 0)
 			tputs("ok\r\n");
 		else
 			tputs("invalid\r\n");
 		break;
 	case 0x2f:				/* get_dta */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov ax, es
-			mov _es, ax
-			mov _bx, bx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_dta() = %04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x30:				/* get_version */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			mov _bx, bx
-			mov _cx, cx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_version() = %u.%u\r\n", _ax & 0xff, _ax >> 8);
 		break;
 	case 0x33:				/* cntrl_brk */
 		switch (_ax & 0xff) {
 		case 0:
-			prefix();
-			setpsp(tracedpsp);
-			_asm {
-				pushf
-				mov ax, _flags
-				push ax
-				popf
-				mov ax, _ax
-				mov dx, _dx
-				int 21h
-				mov _dx, dx
-				mov _ax, ax
-				pushf
-				pop ax
-				mov _flags, ax
-				popf
-			}
-			setpsp(mypsp);
 			tprintf("get_break() = %s\r\n", makeonoff(_dx & 0xff));
 			break;
 		case 1:
-			prefix();
-			tprintf("set_break(%s)\r\n", makeonoff(_dx & 0xff));
-			goto norm_proc;
-		default:
-			goto aka_default;
+			break;
 		}
 		break;
 	case 0x35:				/* get_vector */
-		prefix();
-		tprintf("get_vector(%#x) = ", _ax & 0xff);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			mov _bx, bx
-			mov ax, es
-			mov _es, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("%04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x39:				/* Mkdir */
-		prefix();
-		tputs("mkdir(\"");
-		goto stringfun;
+		okerrorproc(_flags, _ax);
+		break;
 	case 0x3a:				/* Rmdir */
-		prefix();
-		tputs("rmdir(\"");
-		goto stringfun;
+		okerrorproc(_flags, _ax);
+		break;
 	case 0x3b:				/* Chdir */
-		prefix();
-		tputs("chdir(\"");
-	stringfun:
-		tprintf("%Fs\") = ", makefptr(_ds, _dx));
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			push es
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _es
-			mov es, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop es
-			pop ds
-			popf
-		}
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3c:				/* Creat */
-		prefix();
-		tprintf("creat(\"%Fs\", %02x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov dx, _dx
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov cx, _cx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3d:				/* Open */
-		prefix();
-		tprintf("open(\"%Fs\", %d) = ", makefptr(_ds, _dx), _ax & 0xff);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov dx, _dx
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3e:				/* Close */
-		prefix();
-		tprintf("close(%u) = ", _bx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3f:				/* Read */
-		prefix();
-		tputs("read(");
-		goto readwrite;
 	case 0x40:				/* Write */
-		prefix();
-		tputs("write(");
-	readwrite:
-		tprintf("%u, %04X:%04X, %u) = ", _bx, _ds, _dx, _cx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			mov cx, _cx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprint(_ax);
 		else
@@ -1038,75 +951,15 @@ dos_handler(
 		tputs("\r\n");
 		break;
 	case 0x41:				/* Unlink */
-		prefix();
-		tputs("unlink(\"");
-		goto stringfun;
+		okerrorproc(_flags, _ax);
+		break;
 	case 0x42:				/* Lseek */
-		prefix();
-		tprintf("lseek(%u, %ld, %d) = ",_bx, makelong(_cx, _dx), _ax & 0xff);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			mov cx, _cx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			mov _dx, dx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprintln(_ax);
 		else
 			tprintf("%ld\r\n", makelong(_dx, _ax));
 		break;
 	case 0x43:				/* Chmod / getmod */
-		switch (_ax & 0xff) {
-		case 0:
-			prefix();
-			tputs("getmod(\"");
-			break;
-		case 1:
-			prefix();
-			tputs("chmod(\"");
-			break;
-		default:
-			goto aka_default;
-		}
-		tprintf("%Fs", makefptr(_ds, _dx));
-		if (_ax & 0xff == 1)
-			tprintf("\", %#x%s", _cx, strmode(_cx));
-		tputs(") = ");
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov dx, _dx
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov cx, _cx
-			int 21h
-			mov _ax, ax
-			mov _cx, cx
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprint(_ax);
 		else {
@@ -1119,27 +972,7 @@ dos_handler(
 		break;
 	case 0x44:				/* ioctl */
 		switch (_ax & 0xff) {
-		default:
-			goto aka_default;
 		case 0x00:			/* get device info */
-			prefix();
-			tprintf("ioctl(GET_DEV_INFO, %d) = ", _bx);
-			setpsp(tracedpsp);
-			_asm {
-				pushf
-				mov ax, _flags
-				push ax
-				popf
-				mov ax, _ax
-				mov bx, _bx
-				int 21h
-				mov _dx, dx
-				pushf
-				pop ax
-				mov _flags, ax
-				popf
-			}
-			setpsp(mypsp);
 			if (_flags & 1)
 				errprintln(_ax);
 			else {
@@ -1152,70 +985,12 @@ dos_handler(
 		}
 		break;
 	case 0x45:				/* Dup */
-		prefix();
-		tprintf("dup(%u) = ", _bx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x46:				/* Dup2 */
-		prefix();
-		tprintf("dup2(%u, %u) = ", _bx, _cx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			mov cx, _cx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x47:				/* Getcwd */
-		prefix();
-		tprintf("getcwd(%d, %04X:%04X) = ", _dx & 0xff, _ds, _si);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov si, _si
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprintln(_ax);
 		else {
@@ -1226,25 +1001,6 @@ dos_handler(
 		}
 		break;
 	case 0x48:				/* Alloc */
-		prefix();
-		tprintf("alloc(%#x0)= ", _bx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			int 21h
-			mov _ax, ax
-			mov _bx, bx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1) {
 			errprint(_ax);
 			tprintf("\t(free = %#x0 bytes)\r\n", _bx);
@@ -1252,52 +1008,9 @@ dos_handler(
 			tprintf("%04X:0000\r\n", _ax);
 		break;
 	case 0x49:				/* Free */
-		prefix();
-		tprintf("free(%04X:0000) = ", _es);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push es
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _es
-			mov es, ax
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop es
-			popf
-		}
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4a:				/* Realloc */
-		prefix();
-		tprintf("realloc(%04X:0000, %#x0) = ", _es, _bx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push es
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _es
-			mov es, ax
-			mov ax, _ax
-			mov bx, _bx
-			int 21h
-			mov _ax, ax
-			mov _bx, bx
-			pushf
-			pop ax
-			mov _flags, ax
-			pop es
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1) {
 			errprint(_ax);
 			tprintf("\t(free = %#x0 bytes)\r\n", _bx);
@@ -1305,88 +1018,12 @@ dos_handler(
 			tputs("ok\r\n");
 		break;
 	case 0x4b:				/* Exec */
-		prefix();
-		tprintf("exec(\"%Fs", makefptr(_ds, _dx));
-		if (tracechildren)
-			tputs("\") = ...\r\n");
-		else
-			tputs("\") = ");
-		setpsp(tracedpsp);
-		if (tracechildren) {
-			trace = 1;
-			_chain_intr(old_dos_handler);
-		}
-		_asm {
-			pushf
-			push ds
-			push es
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _es
-			mov es, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop es
-			pop ds
-			popf
-		}
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4c:				/* Exit */
-		prefix();
-		tprintf("exit(%d)\r\n", _ax & 0xff);
-		setpsp(tracedpsp);
-		if (tracechildren) {
-			trace = 1;
-			_chain_intr(old_dos_handler);
-		}
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
 		/* NOTREACHED */
 		break;
 	case 0x4e:				/* Findfirst */
-		prefix();
-		tprintf("findfirst(\"%Fs\", %#x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov cx, _cx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprintln(_ax);
 		else {
@@ -1397,23 +1034,6 @@ dos_handler(
 		}
 		break;
 	case 0x4f:				/* Findnext */
-		prefix();
-		tputs("findnext() = ");
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprintln(_ax);
 		else {
@@ -1424,64 +1044,13 @@ dos_handler(
 		}
 		break;
 	case 0x50:				/* set_psp */
-		prefix();
-		tprintf("set_psp(%04X)\r\n", _bx);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov bx, _bx
-			int 21h
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
 		tracedpsp = _bx;
 		break;
 	case 0x51:				/* get_psp */
 	case 0x62:				/* get_psp */
-		prefix();
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			int 21h
-			mov _bx, bx
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		tprintf("get_psp() = %04X\r\n", _bx);
 		break;
 	case 0x55:				/* Create child PSP */
-		prefix();
-		tprintf("child_psp(%04X, %04X) = ", _dx, _si);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov dx, _dx
-			mov si, _si
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			popf
-		}
-		setpsp(mypsp);
 		if (_flags & 1)
 			errprintln(_ax);
 		else {
@@ -1490,47 +1059,8 @@ dos_handler(
 		}
 		break;
 	case 0x5a:				/* Tmpfile */
-		prefix();
-		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx), _cx & 0xff);
-		setpsp(tracedpsp);
-		_asm {
-			pushf
-			push ds
-			mov ax, _ds
-			mov ds, ax
-			mov ax, _flags
-			push ax
-			popf
-			mov ax, _ax
-			mov cx, _cx
-			mov dx, _dx
-			int 21h
-			mov _ax, ax
-			pushf
-			pop ax
-			mov _flags, ax
-			pop ds
-			popf
-		}
 		nerrorproc(_flags, _ax);
 		break;
-	aka_default:
-	default:
-		if (otherprint) {
-			prefix();
-			if (nameprint && fun <= 0x62)
-				tputs(funcs[fun].name);
-			else
-				tprintf("%02x", fun);
-			if (regdump)
-				tprintf(" :ax=%04X bx=%04X cx=%04X dx=%04X si=%04X di=%04X ds=%04X es=%04X\r\n", _ax, _bx, _cx, _dx, _si, _di, _ds, _es);
-			else
-				tputs("\r\n");
-		}
-	norm_proc:
-		setpsp(tracedpsp);
-		trace = 1;
-		_chain_intr(old_dos_handler);
 	}
 	setpsp(tracedpsp);
 	trace = 1;
@@ -1561,7 +1091,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.23 $", revision[30];
+	static char revstring[] = "$Revision: 1.24 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
