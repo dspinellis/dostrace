@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.9 1991/01/24 16:47:41 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.10 1991/01/25 02:44:00 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.9 1991/01/24 16:47:41 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.10 1991/01/25 02:44:00 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
@@ -476,6 +476,67 @@ dos_handler(
 	tracedpsp = getpsp();
 	setpsp(mypsp);
 	switch (fun) {
+	case 0x25:				/* set_vector */
+		outstring("set_vector(");
+		outhex(_ax & 0xff);
+		outstring(", ");
+		outhex(_ds);
+		outstring(":");
+		outhex(_dx);
+		outstring(")\r\n");
+		setpsp(tracedpsp);
+		trace = 1;
+		_chain_intr(old_dos_handler);
+		break;
+	case 0x30:				/* get_version */
+		outstring("get_version() = ");
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			mov _bx, bx
+			mov _cx, cx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		outdec(_ax & 0xff);
+		outstring(".");
+		outdec(_ax >> 8);
+		outstring("\r\n");
+		break;
+	case 0x35:				/* get_vector */
+		outstring("get_vector(");
+		outhex(_ax & 0xff);
+		outstring(") = ");
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			mov _bx, bx
+			mov ax, es
+			mov _es, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		outhex(_es);
+		outstring(":");
+		outhex(_bx);
+		outstring("\r\n");
+		break;
 	case 0x39:				/* Mkdir */
 		outstring("mkdir(\"");
 		goto stringfun;
