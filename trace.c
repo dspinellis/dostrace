@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.15 1991/05/08 00:41:35 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.16 1991/05/27 18:42:19 dds Exp $
  *
  */
 
@@ -17,14 +17,15 @@
 #include <dos.h>
 #include <process.h>
 #include <ctype.h>
+#include <time.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.15 1991/05/08 00:41:35 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.16 1991/05/27 18:42:19 dds Exp $";
 #endif
 
 #define MAXBUFF 80
 
-static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
+static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint;
 static unsigned datalen = 15;
 
 static mypsp, tracedpsp;
@@ -364,6 +365,15 @@ nerrorproc(unsigned flags, unsigned ax)
 	tprintf("%u\r\n", ax);
 }
 
+static void
+print_time(void)
+{
+	_strtime(buff);
+	buff[8] = ' ';
+	buff[9] = '\0';
+	tputs(buff);
+}
+
 #pragma check_stack()
 
 char *funcs[] =
@@ -469,6 +479,8 @@ char *funcs[] =
 	"get_psp",		/* 62H	DOS3 - GET PROGRAM SEGMENT PREFIX ADDRESS */
 };
 
+#define prefix() do { if (timeprint) print_time(); } while (0)
+
 /* The dos interrupt handler */
 static void _cdecl _interrupt _far
 dos_handler(
@@ -504,15 +516,18 @@ dos_handler(
 	setpsp(mypsp);
 	switch (fun) {
 	case 0x02:				/* disp_out */
+		prefix();
 		tprintf("display_char('%c')\r\n", _dx & 0xff);
 		goto norm_proc;
 	case 0x09:				/* disp_string */
+		prefix();
 		if (stringprint)
 			tprintf("display(\"%s\")\r\n", makestring(_ds, _dx));
 		else
 			tprintf("display(%04X:%04X)\r\n", _ds, _dx);
 		goto norm_proc;
 	case 0x0e:				/* set_current_disk */
+		prefix();
 		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) + 'A');
 		setpsp(tracedpsp);
 		_asm {
@@ -533,6 +548,7 @@ dos_handler(
 		tprintf("%d\r\n", _ax & 0xff);
 		break;
 	case 0x19:				/* get_current_disk */
+		prefix();
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -551,12 +567,15 @@ dos_handler(
 		tprintf("get_current_disk() = %c:\r\n", (_ax & 0xff) + 'A');
 		break;
 	case 0x1a:				/* set_dta */
+		prefix();
 		tprintf("set_dta(%04X:%04X)\r\n", _ds, _dx);
 		goto norm_proc;
 	case 0x25:				/* set_vector */
+		prefix();
 		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
 		goto norm_proc;
 	case 0x2a:				/* get_date */
+		prefix();
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -577,6 +596,7 @@ dos_handler(
 		tprintf("get_date() = %2u/%2u/%2u (%s)\r\n", _cx, _dx >> 8,  _dx & 0xff, weekday(_ax & 0xff));
 		break;
 	case 0x2c:				/* get_time */
+		prefix();
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -597,6 +617,7 @@ dos_handler(
 		tprintf("get_time() = %02d:%02d:%02d.%d\r\n", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
 		break;
 	case 0x2d:				/* set_time */
+		prefix();
 		tprintf("set_time(%02d:%02d:%02d.%d) = ", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
 		setpsp(tracedpsp);
 		_asm {
@@ -621,6 +642,7 @@ dos_handler(
 			tputs("invalid\r\n");
 		break;
 	case 0x2f:				/* get_dta */
+		prefix();
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -641,6 +663,7 @@ dos_handler(
 		tprintf("get_dta() = %04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x30:				/* get_version */
+		prefix();
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -663,6 +686,7 @@ dos_handler(
 	case 0x33:				/* cntrl_brk */
 		switch (_ax & 0xff) {
 		case 0:
+			prefix();
 			setpsp(tracedpsp);
 			_asm {
 				pushf
@@ -683,6 +707,7 @@ dos_handler(
 			tprintf("get_break() = %s\r\n", makeonoff(_dx & 0xff));
 			break;
 		case 1:
+			prefix();
 			tprintf("set_break(%s)\r\n", makeonoff(_dx & 0xff));
 			goto norm_proc;
 		default:
@@ -690,6 +715,7 @@ dos_handler(
 		}
 		break;
 	case 0x35:				/* get_vector */
+		prefix();
 		tprintf("get_vector(%#x) = ", _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
@@ -712,12 +738,15 @@ dos_handler(
 		tprintf("%04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x39:				/* Mkdir */
+		prefix();
 		tputs("mkdir(\"");
 		goto stringfun;
 	case 0x3a:				/* Rmdir */
+		prefix();
 		tputs("rmdir(\"");
 		goto stringfun;
 	case 0x3b:				/* Chdir */
+		prefix();
 		tputs("chdir(\"");
 	stringfun:
 		tprintf("%Fs\") = ", makefptr(_ds, _dx));
@@ -748,6 +777,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3c:				/* Creat */
+		prefix();
 		tprintf("creat(\"%Fs\", %02x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
 		setpsp(tracedpsp);
 		_asm {
@@ -772,6 +802,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3d:				/* Open */
+		prefix();
 		tprintf("open(\"%Fs\", %d) = ", makefptr(_ds, _dx), _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
@@ -795,6 +826,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3e:				/* Close */
+		prefix();
 		tprintf("close(%u) = ", _bx);
 		setpsp(tracedpsp);
 		_asm {
@@ -814,9 +846,11 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3f:				/* Read */
+		prefix();
 		tputs("read(");
 		goto readwrite;
 	case 0x40:				/* Write */
+		prefix();
 		tputs("write(");
 	readwrite:
 		tprintf("%u, %04X:%04X, %u) = ", _bx, _ds, _dx, _cx);
@@ -850,9 +884,11 @@ dos_handler(
 		tputs("\r\n");
 		break;
 	case 0x41:				/* Unlink */
+		prefix();
 		tputs("unlink(\"");
 		goto stringfun;
 	case 0x42:				/* Lseek */
+		prefix();
 		tprintf("lseek(%u, %ld, %d) = ",_bx, makelong(_cx, _dx), _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
@@ -881,9 +917,11 @@ dos_handler(
 	case 0x43:				/* Chmod / getmod */
 		switch (_ax & 0xff) {
 		case 0:
+			prefix();
 			tputs("getmod(\"");
 			break;
 		case 1:
+			prefix();
 			tputs("chmod(\"");
 			break;
 		default:
@@ -930,6 +968,7 @@ dos_handler(
 		default:
 			goto aka_default;
 		case 0x00:			/* get device info */
+			prefix();
 			tprintf("ioctl(GET_DEV_INFO, %d) = ", _bx);
 			setpsp(tracedpsp);
 			_asm {
@@ -959,6 +998,7 @@ dos_handler(
 		}
 		break;
 	case 0x45:				/* Dup */
+		prefix();
 		tprintf("dup(%u) = ", _bx);
 		setpsp(tracedpsp);
 		_asm {
@@ -978,6 +1018,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x46:				/* Dup2 */
+		prefix();
 		tprintf("dup2(%u, %u) = ", _bx, _cx);
 		setpsp(tracedpsp);
 		_asm {
@@ -998,6 +1039,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x47:				/* Getcwd */
+		prefix();
 		tprintf("getcwd(%d, %04X:%04X) = ", _dx & 0xff, _ds, _si);
 		setpsp(tracedpsp);
 		_asm {
@@ -1030,6 +1072,7 @@ dos_handler(
 		}
 		break;
 	case 0x48:				/* Alloc */
+		prefix();
 		tprintf("alloc(%#x0)= ", _bx);
 		setpsp(tracedpsp);
 		_asm {
@@ -1054,6 +1097,7 @@ dos_handler(
 			tprintf("%04X:0000\r\n", _ax);
 		break;
 	case 0x49:				/* Free */
+		prefix();
 		tprintf("free(%04X:0000) = ", _es);
 		setpsp(tracedpsp);
 		_asm {
@@ -1076,6 +1120,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4a:				/* Realloc */
+		prefix();
 		tprintf("realloc(%04X:0000, %#x0) = ", _es, _bx);
 		setpsp(tracedpsp);
 		_asm {
@@ -1104,6 +1149,7 @@ dos_handler(
 			tputs("ok\r\n");
 		break;
 	case 0x4b:				/* Exec */
+		prefix();
 		tprintf("exec(\"%Fs", makefptr(_ds, _dx));
 		if (tracechildren)
 			tputs("\") = ...\r\n");
@@ -1140,6 +1186,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4c:				/* Exit */
+		prefix();
 		tprintf("exit(%d)\r\n", _ax & 0xff);
 		setpsp(tracedpsp);
 		if (tracechildren) {
@@ -1161,6 +1208,7 @@ dos_handler(
 		/* NOTREACHED */
 		break;
 	case 0x4e:				/* Findfirst */
+		prefix();
 		tprintf("findfirst(\"%Fs\", %#x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
 		setpsp(tracedpsp);
 		_asm {
@@ -1193,6 +1241,7 @@ dos_handler(
 		}
 		break;
 	case 0x4f:				/* Findnext */
+		prefix();
 		tputs("findnext() = ");
 		setpsp(tracedpsp);
 		_asm {
@@ -1218,7 +1267,46 @@ dos_handler(
 				tputs("ok\r\n");
 		}
 		break;
+	case 0x50:				/* set_psp */
+		prefix();
+		tprintf("set_psp(%04X)\r\n", _bx);
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			int 21h
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		break;
+	case 0x51:				/* get_psp */
+	case 0x62:				/* get_psp */
+		prefix();
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _bx, bx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("get_psp() = %04X\r\n", _bx);
+		break;
 	case 0x5a:				/* Tmpfile */
+		prefix();
 		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx), _cx & 0xff);
 		setpsp(tracedpsp);
 		_asm {
@@ -1245,6 +1333,7 @@ dos_handler(
 	aka_default:
 	default:
 		if (otherprint) {
+			prefix();
 			if (nameprint && fun <= 0x62)
 				tputs(funcs[fun]);
 			else
@@ -1275,17 +1364,20 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxnc] command options ...\n";
 	int c;
-	static char revstring[] = "$Revision: 1.15 $", revision[30];
+	static char revstring[] = "$Revision: 1.16 $", revision[30];
 
 	strcpy(revision, strchr(revstring, ':') + 2);
 	*strchr(revision, '$') = '\0';
-	while ((c = getopt(argc, argv, "f:h:sxol:nrvc")) != EOF)
+	while ((c = getopt(argc, argv, "f:h:sxol:ntrvc")) != EOF)
 		switch (c) {
 		case 'c':
 			tracechildren = 1;
 			break;
 		case 'v':
-			tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			break;
+		case 't':			/* Print time of each call */
+			timeprint = 1;
 			break;
 		case 'r':			/* Dump registers */
 			regdump = 1;
@@ -1320,8 +1412,9 @@ main(int argc, char *argv[])
 			fputs("-o\tTrace other functions\n", stderr);
 			fputs("-c\tTrace children processes\n", stderr);
 			fputs("-n\tPrint other functions by name\n", stderr);
+			fputs("-t\tPrefix each line with the time\n", stderr);
 			fputs("-r\tDump registers on other functions\n", stderr);
-			fputs("-v\tVerbose (-sxonrc)\n", stderr);
+			fputs("-v\tVerbose (-sxonrct)\n", stderr);
 			fputs("-h\tPrint this message\n", stderr);
 			return 0;
 		case '?':			/* Error */
