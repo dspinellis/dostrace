@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.1 1991/01/10 19:13:46 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.2 1991/01/10 21:43:32 dds Exp $
  *
  */
 
@@ -16,9 +16,10 @@
 #include <io.h>
 #include <dos.h>
 #include <process.h>
+#include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.1 1991/01/10 19:13:46 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.2 1991/01/10 21:43:32 dds Exp $";
 #endif
 
 static mypsp;
@@ -33,10 +34,6 @@ static int fd;
 
 #pragma check_stack(off)
 #pragma intrinsic(strlen)
-
-/* Used for number conversions */
-
-static char buff[80];
 
 static void
 outstring(char *s)
@@ -61,20 +58,12 @@ outstring(char *s)
 }
 
 static void
-outso(int sseg, int soff)
+foutnstring(char _far *s, int len)
 {
-	union {
-		struct {
-			unsigned off;
-			unsigned seg;
-		} so;
-		void _far *ptr;
-	} v;
-	int len;
-	
-	v.so.seg = sseg;
-	v.so.off = soff;
-	len = _fstrlen(v.ptr);
+	int sseg, soff;
+
+	sseg = FP_SEG(s);
+	soff = FP_OFF(s);
 	_asm {
 		mov bx, fd
 		mov cx, len
@@ -88,10 +77,49 @@ outso(int sseg, int soff)
 	}
 }
 
-static void
-outdec(int v)
+static void _far *
+makefptr(unsigned seg, unsigned off)
 {
-	itoa(v, buff, 10);
+	union {
+		struct {
+			unsigned off;
+			unsigned seg;
+		} so;
+		void _far *ptr;
+	} v;
+
+	v.so.seg = seg;
+	v.so.off = off;
+	return v.ptr;
+}
+
+static void
+outso(int sseg, int soff)
+{
+	int len;
+	
+	len = _fstrlen(makefptr(sseg, soff));
+	_asm {
+		mov bx, fd
+		mov cx, len
+		mov ax, sseg
+		mov dx, soff
+		push ds
+		mov ds, ax
+		mov ah, 40h
+		int 21h
+		pop ds
+	}
+}
+
+/* Used for number conversions */
+
+static char buff[80];
+
+static void
+outudec(unsigned v)
+{
+	ltoa((long)v, buff, 10);
 	outstring(buff);
 }
 
@@ -102,7 +130,27 @@ outhex(int v)
 	outstring(buff);
 }
 
-unsigned
+static void
+outbuff(unsigned sseg, unsigned soff, unsigned len)
+{
+	char _far *p;
+	unsigned l, i;
+
+	p = makefptr(sseg, soff);
+	l = min(15u, len);
+	for (i = 0; i < l; i++)
+		if (!isascii(p[i]) || !isprint(p[i]))
+			return;
+	outstring("\t\"");
+	foutnstring(p, l);
+	if (l < len)
+		outstring("...\"");
+	else
+		outstring("\"");
+}
+
+	
+static unsigned
 getpsp(void)
 {
 	_asm mov ah, 51h
@@ -110,7 +158,7 @@ getpsp(void)
 	_asm mov ax, bx
 }
 
-void
+static void
 setpsp(unsigned psp)
 {
 	_asm mov ah, 50h
@@ -170,8 +218,8 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outdec(_ax);
-		outstring("\n");
+		outudec(_ax);
+		outstring("\r\n");
 		setpsp(psp);
 		break;
 	case 0x3d:				/* Open */
@@ -180,7 +228,7 @@ dos_handler(
 		outstring("open(\"");
 		outso(_ds, _dx);
 		outstring("\", ");
-		outdec(_ax & 0xff);
+		outudec(_ax & 0xff);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -199,15 +247,15 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outdec(_ax);
-		outstring("\n");
+		outudec(_ax);
+		outstring("\r\n");
 		setpsp(psp);
 		break;
 	case 0x3e:				/* Close */
 		psp = getpsp();
 		setpsp(mypsp);
 		outstring("close(");
-		outdec(_bx);
+		outudec(_bx);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -222,10 +270,10 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1) {
 			outstring("Error ");
-			outdec(_ax);
-			outstring("\n");
+			outudec(_ax);
+			outstring("\r\n");
 		} else
-			outstring("ok\n");
+			outstring("ok\r\n");
 		setpsp(psp);
 		break;
 	case 0x3f:				/* Read */
@@ -238,13 +286,13 @@ dos_handler(
 		setpsp(mypsp);
 		outstring("write(");
 	readwrite:
-		outdec(_bx);
+		outudec(_bx);
 		outstring(", ");
 		outhex(_ds);
 		outstring(":");
 		outhex(_dx);
 		outstring(", ");
-		outdec(_cx);
+		outudec(_cx);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -265,8 +313,9 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outdec(_ax);
-		outstring("\n");
+		outudec(_ax);
+		outbuff(_ds, _dx, _cx);
+		outstring("\r\n");
 		recurse = 0;
 		setpsp(psp);
 		break;
