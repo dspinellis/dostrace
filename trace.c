@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.8 1991/01/20 17:46:30 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.9 1991/01/24 16:47:41 dds Exp $
  *
  */
 
@@ -19,10 +19,10 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.8 1991/01/20 17:46:30 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.9 1991/01/24 16:47:41 dds Exp $";
 #endif
 
-static int stringprint, hexprint, otherprint, nameprint, regdump;
+static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
 static unsigned datalen = 15;
 
 static mypsp, tracedpsp;
@@ -460,16 +460,22 @@ dos_handler(
 	unsigned _cs,
 	unsigned _flags)
 {
-	static recurse;
-	static firstexec;
+	static trace = 1;
+	static execed;
 	int fun;
 
-	if (recurse || *critsectflag || *criterrflag)
+	fun = _ax >> 8;
+	if (!execed) {
+		if (fun == 0x4b)
+			execed = 1;
 		_chain_intr(old_dos_handler);
-	recurse = 1;
+	}
+	if (!trace || *critsectflag || *criterrflag)
+		_chain_intr(old_dos_handler);
+	trace = 0;
 	tracedpsp = getpsp();
 	setpsp(mypsp);
-	switch (fun = (_ax >> 8)) {
+	switch (fun) {
 	case 0x39:				/* Mkdir */
 		outstring("mkdir(\"");
 		goto stringfun;
@@ -895,13 +901,42 @@ dos_handler(
 			outstring("ok\r\n");
 		break;
 	case 0x4b:				/* Exec */
-		if (firstexec == 0) {
-			firstexec = 1;
-			goto aka_default;
-		} else {
-			outstring("exec(\"");
-			goto stringfun;
+		outstring("exec(\"");
+		outso(_ds, _dx);
+		if (tracechildren)
+			outstring("\") = ...\r\n");
+		else
+			outstring("\") = ");
+		setpsp(tracedpsp);
+		if (tracechildren) {
+			trace = 1;
+			_chain_intr(old_dos_handler);
 		}
+		_asm {
+			pushf
+			push ds
+			push es
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _es
+			mov es, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop es
+			pop ds
+			popf
+		}
+		okerrorproc(_flags, _ax);
+		break;
 	case 0x4c:				/* Exit */
 		outstring("exit(");
 		outdec(_ax & 0xff);
@@ -1044,11 +1079,11 @@ dos_handler(
 			outstring("\r\n");
 		}
 		setpsp(tracedpsp);
-		recurse = 0;
+		trace = 1;
 		_chain_intr(old_dos_handler);
 	}
 	setpsp(tracedpsp);
-	recurse = 0;
+	trace = 1;
 }
 
 int getopt(int, char **, char *);
@@ -1061,13 +1096,16 @@ main(int argc, char *argv[])
 	extern char *optarg;
 	char *fname = "trace.log";
 	int errflag = 0;
-	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxn] command options ...\n";
+	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxnc] command options ...\n";
 	int c;
 
-	while ((c = getopt(argc, argv, "f:h:sxol:nrv")) != EOF)
+	while ((c = getopt(argc, argv, "f:h:sxol:nrvc")) != EOF)
 		switch (c) {
+		case 'c':
+			tracechildren = 1;
+			break;
 		case 'v':
-			regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
 			break;
 		case 'r':			/* Dump registers */
 			regdump = 1;
@@ -1098,9 +1136,10 @@ main(int argc, char *argv[])
 			fputs("-x\tPrint I/O binary data (needs -s)\n", stderr);
 			fputs("-l\tSpecify I/O printed data length\n", stderr);
 			fputs("-o\tTrace other functions\n", stderr);
+			fputs("-c\tTrace children processes\n", stderr);
 			fputs("-n\tPrint other functions by name\n", stderr);
 			fputs("-r\tDump registers on other functions\n", stderr);
-			fputs("-v\tVerbose (-sxonr)\n", stderr);
+			fputs("-v\tVerbose (-sxonrc)\n", stderr);
 			fputs("-h\tPrint this message\n", stderr);
 			return 0;
 		case '?':			/* Error */
