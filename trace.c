@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.2 1991/01/10 21:43:32 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.3 1991/01/10 23:40:06 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.2 1991/01/10 21:43:32 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.3 1991/01/10 23:40:06 dds Exp $";
 #endif
 
 static mypsp;
@@ -77,6 +77,23 @@ foutnstring(char _far *s, int len)
 	}
 }
 
+static long
+makelong(unsigned high, unsigned low)
+{
+	union {
+		struct {
+			unsigned low;
+			unsigned high;
+		} hl;
+		long l;
+	} v;
+
+	v.hl.high = high;
+	v.hl.low = low;
+	return v.l;
+}
+
+
 static void _far *
 makefptr(unsigned seg, unsigned off)
 {
@@ -117,9 +134,9 @@ outso(int sseg, int soff)
 static char buff[80];
 
 static void
-outudec(unsigned v)
+outdec(long v)
 {
-	ltoa((long)v, buff, 10);
+	ltoa(v, buff, 10);
 	outstring(buff);
 }
 
@@ -135,14 +152,34 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 {
 	char _far *p;
 	unsigned l, i;
+	char *s = buff;
 
 	p = makefptr(sseg, soff);
 	l = min(15u, len);
 	for (i = 0; i < l; i++)
-		if (!isascii(p[i]) || !isprint(p[i]))
+		if (!isascii(p[i]))
 			return;
+		else
+			switch (p[i]) {
+			case '\n':
+				*s++ = '\\';
+				*s++ = 'n';
+				break;
+			case '\t':
+				*s++ = '\\';
+				*s++ = 't';
+				break;
+			case '\r':
+				*s++ = '\\';
+				*s++ = 'r';
+				break;
+			default:
+				if (iscntrl(p[i]))
+					return;
+				*s++ = p[i];
+			}
 	outstring("\t\"");
-	foutnstring(p, l);
+	foutnstring(buff, l);
 	if (l < len)
 		outstring("...\"");
 	else
@@ -218,7 +255,7 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outudec(_ax);
+		outdec(_ax);
 		outstring("\r\n");
 		setpsp(psp);
 		break;
@@ -228,7 +265,7 @@ dos_handler(
 		outstring("open(\"");
 		outso(_ds, _dx);
 		outstring("\", ");
-		outudec(_ax & 0xff);
+		outdec(_ax & 0xff);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -247,7 +284,7 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outudec(_ax);
+		outdec(_ax);
 		outstring("\r\n");
 		setpsp(psp);
 		break;
@@ -255,7 +292,7 @@ dos_handler(
 		psp = getpsp();
 		setpsp(mypsp);
 		outstring("close(");
-		outudec(_bx);
+		outdec(_bx);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -270,7 +307,7 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1) {
 			outstring("Error ");
-			outudec(_ax);
+			outdec(_ax);
 			outstring("\r\n");
 		} else
 			outstring("ok\r\n");
@@ -286,13 +323,13 @@ dos_handler(
 		setpsp(mypsp);
 		outstring("write(");
 	readwrite:
-		outudec(_bx);
+		outdec(_bx);
 		outstring(", ");
 		outhex(_ds);
 		outstring(":");
 		outhex(_dx);
 		outstring(", ");
-		outudec(_cx);
+		outdec(_cx);
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
@@ -313,10 +350,42 @@ dos_handler(
 		setpsp(mypsp);
 		if (_flags & 1)
 			outstring("Error ");
-		outudec(_ax);
+		outdec(_ax);
 		outbuff(_ds, _dx, _cx);
 		outstring("\r\n");
 		recurse = 0;
+		setpsp(psp);
+		break;
+	case 0x42:				/* Lseek */
+		psp = getpsp();
+		setpsp(mypsp);
+		outstring("lseek(");
+		outdec(_bx);
+		outstring(", ");
+		outdec(makelong(_cx, _dx));
+		outstring(", ");
+		outdec(_ax & 0xff);
+		outstring(") = ");
+		setpsp(psp);
+		_asm {
+			mov ax, _ax
+			mov bx, _bx
+			mov cx, _cx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			mov _dx, dx
+			pushf
+			pop ax
+			mov _flags, ax
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+		} else
+			outdec(makelong(_dx, _ax));
+		outstring("\r\n");
 		setpsp(psp);
 		break;
 	default:
