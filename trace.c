@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.17 1991/05/27 22:12:31 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.18 1991/06/02 20:02:33 dds Exp $
  *
  */
 
@@ -22,12 +22,12 @@
 #include <bios.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.17 1991/05/27 22:12:31 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.18 1991/06/02 20:02:33 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
 
-static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint;
+static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint, branchprint;
 static unsigned datalen = 15;
 static someprefix;
 
@@ -558,7 +558,7 @@ struct s_func {
 
 
 static void
-prefixfun(int fun)
+prefixfun(int fun, unsigned cs, unsigned ip)
 {
 	if (timeprint)
 		print_time();
@@ -566,9 +566,11 @@ prefixfun(int fun)
 		tprintf("%04x ", tracedpsp);
 	if (numprint)
 		tprintf("%02x ", fun);
+	if (branchprint)
+		tprintf("%04X:%04X ", cs, ip - 2);
 }
 
-#define prefix() do { if (someprefix) prefixfun(fun); } while (0)
+#define prefix() do { if (someprefix) prefixfun(fun, _cs, _ip); } while (0)
 
 /* The dos interrupt handler */
 static void _cdecl _interrupt _far
@@ -1469,9 +1471,9 @@ main(int argc, char *argv[])
 	extern char *optarg;
 	char *fname = "trace.log";
 	int errflag = 0;
-	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-acfinrstvwx] [-p psp] [command options ...]\n";
+	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwx] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.17 $", revision[30];
+	static char revstring[] = "$Revision: 1.18 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
@@ -1485,7 +1487,7 @@ main(int argc, char *argv[])
 		*p = '\0';
 	if (!*argv[0])
 		argv[0] = "trace";
-	while ((c = getopt(argc, argv, "afo:h:sxl:nitrevcp:w")) != EOF)
+	while ((c = getopt(argc, argv, "abfo:h:sxl:nitrevcp:w")) != EOF)
 		switch (c) {
 		case 'i':			/* Print psp */
 			pspprint = 1;
@@ -1498,10 +1500,13 @@ main(int argc, char *argv[])
 			tracechildren = 1;
 			break;
 		case 'v':
-			pspprint = worderror = numprint = timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			branchprint = pspprint = worderror = numprint = timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
 			break;
 		case 'f':			/* Print function number */
 			numprint = 1;
+			break;
+		case 'b':			/* Print interrupt branch address */
+			branchprint = 1;
 			break;
 		case 't':			/* Print time of each call */
 			timeprint = 1;
@@ -1541,6 +1546,7 @@ main(int argc, char *argv[])
 			fprintf(stderr, "Trace Version %s (C) Copyright 1991 D. Spinellis.  All rights reserved.\n", revision);
 			fprintf(stderr, usagestring, argv[0]);
 			fputs("-a\tTrace all DOS functions\n", stderr);
+			fputs("-b\tPrint interrupt branch address\n", stderr);
 			fputs("-c\tProduce a count summary only\n", stderr);
 			fputs("-e\tTrace across exec calls\n", stderr);
 			fputs("-f\tPrefix calls with function number\n", stderr);
@@ -1569,7 +1575,7 @@ main(int argc, char *argv[])
 		perror(fname);
 		return 1;
 	}
-	someprefix = pspprint | timeprint | numprint;
+	someprefix = pspprint | timeprint | numprint | branchprint;
 	mypsp = getpsp();
 	critsectflag = getcritsectflag();
 	if (_osmajor == 2)
@@ -1600,7 +1606,7 @@ main(int argc, char *argv[])
 	if (count)
 		for (c = 0; c < 256; c++)
 			if (funcs[c].count)
-				tprintf("%02X %20s %10u\n", c, funcs[c].name ? funcs[c].name : "???", funcs[c].count);
+				tprintf("%02X %20s %10u\r\n", c, funcs[c].name ? funcs[c].name : "???", funcs[c].count);
 
 	close(fd);
 	if (status == -1) {
