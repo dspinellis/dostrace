@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.12 1991/02/25 19:26:11 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.13 1991/03/04 23:54:07 dds Exp $
  *
  */
 
@@ -19,8 +19,10 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.12 1991/02/25 19:26:11 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.13 1991/03/04 23:54:07 dds Exp $";
 #endif
+
+#define MAXBUFF 80
 
 static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
 static unsigned datalen = 15;
@@ -76,6 +78,7 @@ tprintf(char *fmt, ...)
 	f._cnt = 32000;
 	f._flag = _IOWRT | _IOFBF;
 	va_start(marker, fmt);
+#pragma message("Expect warning for address of automatic (local) variable taken")
 	result = _doprnt(fmt, marker, &f);
 	*f._ptr = '\0';
 	va_end(marker);
@@ -116,7 +119,40 @@ makefptr(unsigned seg, unsigned off)
 	return v.ptr;
 }
 
-static char buff[80];
+static char buff[MAXBUFF];
+
+/*
+ * Convert a $ terminated string to a 0 terminated one
+ */
+static char *
+makestring(unsigned sseg, unsigned soff)
+{
+	char _far *p, *s;
+	unsigned count = 0;
+
+	p = makefptr(sseg, soff);
+	s = buff;
+	while (*p != '$' && count < datalen) {
+		*s++ = *p++;
+		count++;
+	}
+	*s = '\0';
+	return buff;
+}
+
+static char *
+makeonoff(int n)
+{
+	switch (n) {
+	case 0:
+		return "off";
+	case 1:
+		return "on";
+	default:
+		return itoa(n, buff, 10);
+	}
+}
+
 
 static void
 outbuff(unsigned sseg, unsigned soff, unsigned len)
@@ -186,6 +222,7 @@ getpsp(void)
 	_asm int 21h
 	_asm mov ax, bx
 }
+#pragma message("Expect warning for no returned value")
 
 static void
 setpsp(unsigned psp)
@@ -420,14 +457,104 @@ dos_handler(
 	tracedpsp = getpsp();
 	setpsp(mypsp);
 	switch (fun) {
+	case 0x02:				/* disp_out */
+		tprintf("display_char('%c')\r\n", _dx & 0xff);
+		goto norm_proc;
+	case 0x09:				/* disp_string */
+		if (stringprint)
+			tprintf("display(\"%s\")\r\n", makestring(_ds, _dx));
+		else
+			tprintf("display(%04X:%04X)\r\n", _ds, _dx);
+		goto norm_proc;
+	case 0x0e:				/* set_current_disk */
+		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) + 'A');
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("%d\r\n", _ax & 0xff);
+		break;
+	case 0x19:				/* get_current_disk */
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("get_current_disk() = %c:\r\n", (_ax & 0xff) + 'A');
+		break;
+	case 0x1a:				/* set_dta */
+		tprintf("set_dta(%04X:%04X)\r\n", _ds, _dx);
+		goto norm_proc;
 	case 0x25:				/* set_vector */
 		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
+		goto norm_proc;
+	case 0x2c:				/* get_time */
 		setpsp(tracedpsp);
-		trace = 1;
-		_chain_intr(old_dos_handler);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			mov _cx, cx
+			mov _dx, dx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("get_time() = %02d:%02d:%02d.%d\r\n", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
+		break;
+	case 0x2d:				/* set_time */
+		tprintf("set_time(%02d:%02d:%02d.%d) = ", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov cx, _cx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		if (_ax & 0xff == 0)
+			tputs("ok\r\n");
+		else
+			tputs("invalid\r\n");
 		break;
 	case 0x30:				/* get_version */
-		tputs("get_version() = ");
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -444,7 +571,37 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
-		tprintf("%u.%u\r\n", _ax & 0xff, _ax >> 8);
+		setpsp(mypsp);
+		tprintf("get_version() = %u.%u\r\n", _ax & 0xff, _ax >> 8);
+		break;
+	case 0x33:				/* cntrl_brk */
+		switch (_ax & 0xff) {
+		case 0:
+			setpsp(tracedpsp);
+			_asm {
+				pushf
+				mov ax, _flags
+				push ax
+				popf
+				mov ax, _ax
+				mov dx, _dx
+				int 21h
+				mov _dx, dx
+				mov _ax, ax
+				pushf
+				pop ax
+				mov _flags, ax
+				popf
+			}
+			setpsp(mypsp);
+			tprintf("get_break() = %s\r\n", makeonoff(_dx & 0xff));
+			break;
+		case 1:
+			tprintf("set_break(%s)\r\n", makeonoff(_dx & 0xff));
+			goto norm_proc;
+		default:
+			goto aka_default;
+		}
 		break;
 	case 0x35:				/* get_vector */
 		tprintf("get_vector(%#x) = ", _ax & 0xff);
@@ -465,6 +622,7 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
+		setpsp(mypsp);
 		tprintf("%04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x39:				/* Mkdir */
@@ -635,12 +793,16 @@ dos_handler(
 			tprintf("%ld\r\n", makelong(_dx, _ax));
 		break;
 	case 0x43:				/* Chmod / getmod */
-		if ((_ax & 0xff) == 0)
+		switch (_ax & 0xff) {
+		case 0:
 			tputs("getmod(\"");
-		else if ((_ax & 0xff) == 1)
+			break;
+		case 1:
 			tputs("chmod(\"");
-		else
+			break;
+		default:
 			goto aka_default;
+		}
 		tprintf("%Fs", makefptr(_ds, _dx));
 		if (_ax & 0xff == 1)
 			tprintf("\", %#x%s", _cx, strmode(_cx));
@@ -968,6 +1130,7 @@ dos_handler(
 			else
 				tputs("\r\n");
 		}
+	norm_proc:
 		setpsp(tracedpsp);
 		trace = 1;
 		_chain_intr(old_dos_handler);
@@ -988,7 +1151,10 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxnc] command options ...\n";
 	int c;
+	static char revstring[] = "$Revision: 1.13 $", revision[30];
 
+	strcpy(revision, strchr(revstring, ':') + 2);
+	*strchr(revision, '$') = '\0';
 	while ((c = getopt(argc, argv, "f:h:sxol:nrvc")) != EOF)
 		switch (c) {
 		case 'c':
@@ -1017,10 +1183,12 @@ main(int argc, char *argv[])
 			break;
 		case 'l':
 			datalen = atoi(optarg);
+			if (datalen >= MAXBUFF)
+				datalen = MAXBUFF - 1;
 			break;
 		case 'h':			/* Help */
 			fputs(usagestring, stderr);
-			fputs("Trace Version 1.00 (C) Copyright 1991 D. Spinellis.  All rights reserved\n", stderr);
+			fprintf(stderr, "Trace Version %s (C) Copyright 1991 D. Spinellis.  All rights reserved.\n", revision);
 			fputs("-f\tSpecify output file name\n", stderr);
 			fputs("-s\tPrint I/O strings\n", stderr);
 			fputs("-x\tPrint I/O binary data (needs -s)\n", stderr);
