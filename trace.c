@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.13 1991/03/04 23:54:07 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.14 1991/05/07 20:54:19 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.13 1991/03/04 23:54:07 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.14 1991/05/07 20:54:19 dds Exp $";
 #endif
 
 #define MAXBUFF 80
@@ -140,6 +140,51 @@ makestring(unsigned sseg, unsigned soff)
 	return buff;
 }
 
+/*
+ * Return day of week
+ */
+static char *
+weekday(int n)
+{
+	switch (n) {
+		case 0: return "Sun";
+		case 1: return "Mon";
+		case 2: return "Tue";
+		case 3: return "Wed";
+		case 4: return "Thu";
+		case 5: return "Fri";
+		case 6: return "Sat";
+	}
+}
+
+/*
+ * Decode device information as for ioctl 0
+ */
+static void
+devinfo(unsigned n)
+{
+	if (n & 0x80) {
+		tputs("\tCHARDEV: ");
+		if (n & 0x01) tputs("STDIN ");
+		if (n & 0x02) tputs("STDOUT ");
+		if (n & 0x04) tputs("NUL ");
+		if (n & 0x08) tputs("CLOCK$ ");
+		if (n & 0x10) tputs("SPECIAL ");
+		if (n & 0x20) tputs("RAW ");
+		if (n & 0x40) tputs("NOT_EOF "); else tputs("EOF ");
+		if (n & 0x1000) tputs("REMOTE "); else tputs("LOCAL ");
+		if (n & 0x4000) tputs("CAN_IOCTL"); else tputs("NO_IOCTL");
+	} else {
+		tputs("\tFILE: ");
+		tprintf("device=%u ", n & 0x1f);
+		if (n & 0x40) tputs("NOT_WRITTEN "); else tputs("WRITTEN ");
+		if (n & 0x800) tputs("FIXED "); else tputs("REMOVABLE ");
+		if (n & 0x4000) tputs("KEEP_DATE "); else tputs("UPDATE_DATE ");
+		if (n & 0x8000) tputs("REMOTE"); else tputs("LOCAL");
+	}
+	tputs("\r\n");
+}
+
 static char *
 makeonoff(int n)
 {
@@ -177,7 +222,7 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 		for (i = 0; i < l; i++) {
 			*s++ = '0';
 			*s++ = 'x';
-			*s++ = hexnum[(unsigned)p[i]>>4];
+			*s++ = hexnum[(unsigned char)p[i]>>4];
 			*s++ = hexnum[p[i] & 0xf];
 			*s++ = ',';
 		}
@@ -510,6 +555,26 @@ dos_handler(
 	case 0x25:				/* set_vector */
 		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
 		goto norm_proc;
+	case 0x2a:				/* get_date */
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			mov _cx, cx
+			mov _dx, dx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("get_date() = %2u/%2u/%2u (%s)\r\n", _cx, _dx >> 8,  _dx & 0xff, weekday(_ax & 0xff));
+		break;
 	case 0x2c:				/* get_time */
 		setpsp(tracedpsp);
 		_asm {
@@ -553,6 +618,26 @@ dos_handler(
 			tputs("ok\r\n");
 		else
 			tputs("invalid\r\n");
+		break;
+	case 0x2f:				/* get_dta */
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			mov ax, es
+			mov _es, ax
+			mov _bx, bx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		tprintf("get_dta() = %04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x30:				/* get_version */
 		setpsp(tracedpsp);
@@ -838,6 +923,39 @@ dos_handler(
 				tputs("ok");
 		}
 		tputs("\r\n");
+		break;
+	case 0x44:				/* ioctl */
+		switch (_ax & 0xff) {
+		default:
+			goto aka_default;
+		case 0x00:			/* get device info */
+			tprintf("ioctl(GET_DEV_INFO, %d) = ", _bx);
+			setpsp(tracedpsp);
+			_asm {
+				pushf
+				mov ax, _flags
+				push ax
+				popf
+				mov ax, _ax
+				mov bx, _bx
+				int 21h
+				mov _dx, dx
+				pushf
+				pop ax
+				mov _flags, ax
+				popf
+			}
+			setpsp(mypsp);
+			if (_flags & 1)
+				tprintf("Error %u\r\n", _ax);
+			else {
+				if (stringprint)
+					devinfo(_dx);
+				else
+					tprintf("%04X\r\n", _dx);
+			}
+			break;
+		}
 		break;
 	case 0x45:				/* Dup */
 		tprintf("dup(%u) = ", _bx);
@@ -1151,7 +1269,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxnc] command options ...\n";
 	int c;
-	static char revstring[] = "$Revision: 1.13 $", revision[30];
+	static char revstring[] = "$Revision: 1.14 $", revision[30];
 
 	strcpy(revision, strchr(revstring, ':') + 2);
 	*strchr(revision, '$') = '\0';
