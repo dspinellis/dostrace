@@ -3,8 +3,17 @@
  *
  * (C) Copyright 1991-1994 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.27 1994/02/06 10:02:59 dds Exp $
+ * $Id: trace.c,v 1.28 1994/10/01 11:32:56 dds Exp $
  *
+ * Permission to use, copy, and distribute this software and its
+ * documentation for any purpose and without fee is hereby granted,
+ * provided that the above copyright notice appear in all copies and that
+ * both that copyright notice and this permission notice appear in
+ * supporting documentation.
+ * 
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
 #include <stddef.h>
@@ -23,7 +32,7 @@
 #include <errno.h>
 
 #ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.27 1994/02/06 10:02:59 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.28 1994/10/01 11:32:56 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -1333,7 +1342,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.27 $", revision[30];
+	static char revstring[] = "$Revision: 1.28 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
