@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.5 1991/01/19 18:40:39 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.6 1991/01/20 16:35:53 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.5 1991/01/19 18:40:39 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.6 1991/01/20 16:35:53 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump;
@@ -63,7 +63,7 @@ outstring(char *s)
 }
 
 static void
-foutstring(char _far *s)
+outfstring(char _far *s)
 {
 	int sseg, soff;
 	int len = _fstrlen(s);
@@ -149,7 +149,9 @@ outdec(long v)
 static void
 outhex(int v)
 {
-	itoa(v, buff, 16);
+	itoa(v, buff + 2, 16);
+	buff[0] = '0';
+	buff[1] = 'x';
 	outstring(buff);
 }
 
@@ -210,7 +212,7 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 		*s++ = '"';
 	}
 	*s++ = '\0';
-	foutstring(buff);
+	outfstring(buff);
 }
 
 	
@@ -241,6 +243,28 @@ getcritsectflag(void)
 	_asm mov sseg, ax
 	_asm mov soff, bx
 	return makefptr(sseg, soff);
+}
+
+static void
+okerrorproc(unsigned flags, unsigned ax)
+{
+	setpsp(mypsp);
+	if (flags & 1) {
+		outstring("Error ");
+		outdec(ax);
+		outstring("\r\n");
+	} else
+		outstring("ok\r\n");
+}
+
+static void
+nerrorproc(unsigned flags, unsigned ax)
+{
+	setpsp(mypsp);
+	if (flags & 1)
+		outstring("Error ");
+	outdec(ax);
+	outstring("\r\n");
 }
 
 #pragma check_stack()
@@ -366,6 +390,7 @@ dos_handler(
 	unsigned _flags)
 {
 	static recurse;
+	static firstexec;
 	int psp;
 	int fun;
 
@@ -375,10 +400,47 @@ dos_handler(
 	psp = getpsp();
 	setpsp(mypsp);
 	switch (fun = (_ax >> 8)) {
+	case 0x39:				/* Mkdir */
+		outstring("mkdir(\"");
+		goto stringfun;
+	case 0x3a:				/* Rmdir */
+		outstring("rmdir(\"");
+		goto stringfun;
+	case 0x3b:				/* Chdir */
+		outstring("chdir(\"");
+	stringfun:
+		outso(_ds, _dx);
+		outstring("\") = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			push ds
+			push es
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _es
+			mov es, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop es
+			pop ds
+			popf
+		}
+		okerrorproc(_flags, _ax);
+		break;
 	case 0x3c:				/* Creat */
 		outstring("creat(\"");
 		outso(_ds, _dx);
-		outstring("\", 0x");
+		outstring("\", ");
 		outhex(_cx);
 		outstring(") = ");
 		setpsp(psp);
@@ -401,11 +463,7 @@ dos_handler(
 			pop ds
 			popf
 		}
-		setpsp(mypsp);
-		if (_flags & 1)
-			outstring("Error ");
-		outdec(_ax);
-		outstring("\r\n");
+		nerrorproc(_flags, _ax);
 		break;
 	case 0x3d:				/* Open */
 		outstring("open(\"");
@@ -432,11 +490,7 @@ dos_handler(
 			pop ds
 			popf
 		}
-		setpsp(mypsp);
-		if (_flags & 1)
-			outstring("Error ");
-		outdec(_ax);
-		outstring("\r\n");
+		nerrorproc(_flags, _ax);
 		break;
 	case 0x3e:				/* Close */
 		outstring("close(");
@@ -457,13 +511,7 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
-		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\r\n");
-		} else
-			outstring("ok\r\n");
+		okerrorproc(_flags, _ax);
 		break;
 	case 0x3f:				/* Read */
 		outstring("read(");
@@ -507,8 +555,10 @@ dos_handler(
 		if (stringprint)
 			outbuff(_ds, _dx, _ax);
 		outstring("\r\n");
-		recurse = 0;
 		break;
+	case 0x41:				/* Unlink */
+		outstring("unlink(\"");
+		goto stringfun;
 	case 0x42:				/* Lseek */
 		outstring("lseek(");
 		outdec(_bx);
@@ -543,14 +593,264 @@ dos_handler(
 			outdec(makelong(_dx, _ax));
 		outstring("\r\n");
 		break;
+	case 0x43:				/* Chmod / getmod */
+		if ((_ax & 0xff) == 0)
+			outstring("getmod(\"");
+		else if ((_ax & 0xff) == 1)
+			outstring("chmod(\"");
+		else
+			goto aka_default;
+		outso(_ds, _dx);
+		if (_ax & 0xff == 1) {
+			outstring("\", ");
+			outhex(_cx);
+		}
+		outstring(") = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			push ds
+			mov dx, _dx
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov cx, _cx
+			int 21h
+			mov _ax, ax
+			mov _cx, cx
+			pushf
+			pop ax
+			mov _flags, ax
+			pop ds
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+		} else {
+			if (_ax & 0xff == 0)
+				outdec(_cx);
+			else
+				outstring("ok");
+		}
+		outstring("\r\n");
+		break;
+	case 0x45:				/* Dup */
+		outstring("dup(");
+		outdec(_bx);
+		outstring(") = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		nerrorproc(_flags, _ax);
+		break;
+	case 0x46:				/* Dup2 */
+		outstring("dup2(");
+		outdec(_bx);
+		outstring(", ");
+		outdec(_cx);
+		outstring(") = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			mov cx, _cx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		okerrorproc(_flags, _ax);
+		break;
+	case 0x47:				/* Getcwd */
+		outstring("getcwd(");
+		outdec(_dx & 0xff);
+		outstring(", ");
+		outhex(_ds);
+		outstring(":");
+		outhex(_si);
+		outstring(") = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			push ds
+			mov ax, _ds
+			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov si, _si
+			mov dx, _dx
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop ds
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+			outstring("\r\n");
+		} else {
+			if (stringprint) {
+				outstring("ok\t\"");
+				outfstring(makefptr(_ds, _si));
+				outstring("\"\r\n");
+			} else
+				outstring("ok\r\n");
+		}
+		break;
+	case 0x48:				/* Alloc */
+		outstring("alloc(");
+		outhex(_bx);
+		outstring("0) = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov bx, _bx
+			int 21h
+			mov _ax, ax
+			mov _bx, bx
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+			outstring("\t(free = ");
+			outhex(_bx);
+			outstring("0 bytes)\r\n");
+		} else {
+			outhex(_ax);
+			outstring(":0\r\n");
+		}
+		break;
+	case 0x49:				/* Free */
+		outstring("free(");
+		outhex(_es);
+		outstring(":0) = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			push es
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _es
+			mov es, ax
+			mov ax, _ax
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			pop es
+			popf
+		}
+		okerrorproc(_flags, _ax);
+		break;
+	case 0x4a:				/* Realloc */
+		outstring("realloc(");
+		outhex(_es);
+		outstring(":0, ");
+		outhex(_bx);
+		outstring("0) = ");
+		setpsp(psp);
+		_asm {
+			pushf
+			push es
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _es
+			mov es, ax
+			mov ax, _ax
+			mov bx, _bx
+			int 21h
+			mov _ax, ax
+			mov _bx, bx
+			pushf
+			pop ax
+			mov _flags, ax
+			pop es
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1) {
+			outstring("Error ");
+			outdec(_ax);
+			outstring("\t(free = ");
+			outhex(_bx);
+			outstring("0 bytes)\r\n");
+		} else
+			outstring("ok\r\n");
+		break;
+	case 0x4b:				/* Exec */
+		if (firstexec == 0) {
+			firstexec = 1;
+			goto aka_default;
+		} else {
+			outstring("exec(\"");
+			goto stringfun;
+		}
+	case 0x4c:				/* Exit */
+		outstring("exit(");
+		outdec(_ax & 0xff);
+		outstring(")\r\n");
+		setpsp(psp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			int 21h
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		break;
+	aka_default:
 	default:
 		if (otherprint) {
 			if (nameprint && fun <= 0x62) {
 				outstring(funcs[fun]);
-			} else {
-				outstring("0x");
+			} else
 				outhex(fun);
-			}
 			if (regdump) {
 				outstring(" :ax=");
 				outhex(_ax);
