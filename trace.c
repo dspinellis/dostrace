@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991, 1993 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.21 1993/01/11 15:39:25 dds Exp $
+ * $Id: trace.c,v 1.22 1993/01/12 23:08:46 dds Exp $
  *
  */
 
@@ -22,7 +22,7 @@
 #include <bios.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.21 1993/01/11 15:39:25 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.22 1993/01/12 23:08:46 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -95,7 +95,6 @@ tprintf(char *fmt, ...)
 	f._cnt = 32000;
 	f._flag = _IOWRT | _IOFBF;
 	va_start(marker, fmt);
-#pragma message("Expect warning for address of automatic (local) variable taken")
 	result = _doprnt(fmt, marker, &f);
 	*f._ptr = '\0';
 	va_end(marker);
@@ -294,7 +293,6 @@ getpsp(void)
 	_asm int 21h
 	_asm mov ax, bx
 }
-#pragma message("Expect warning for no returned value")
 
 /*
  * Set executing programs PSP
@@ -1554,7 +1552,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwx] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.21 $", revision[30];
+	static char revstring[] = "$Revision: 1.22 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
