@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.10 1991/01/25 02:44:00 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.11 1991/02/25 19:17:29 dds Exp $
  *
  */
 
@@ -19,7 +19,7 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.10 1991/01/25 02:44:00 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.11 1991/02/25 19:17:29 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
@@ -41,7 +41,7 @@ static int fd;
 #pragma intrinsic(strlen)
 
 static void
-outstring(char *s)
+tputs(char *s)
 {
 	int len = strlen(s);
 	int sseg, soff;
@@ -62,25 +62,18 @@ outstring(char *s)
 	}
 }
 
-static void
-outfstring(char _far *s)
+int
+tprintf(char *fmt, ...)
 {
-	int sseg, soff;
-	int len = _fstrlen(s);
+	va_list marker;
+	int result;
+	static char msg[200];
 
-	sseg = FP_SEG(s);
-	soff = FP_OFF(s);
-	_asm {
-		mov bx, fd
-		mov cx, len
-		mov ax, sseg
-		mov dx, soff
-		push ds
-		mov ds, ax
-		mov ah, 40h
-		int 21h
-		pop ds
-	}
+	va_start(marker, fmt);
+	result = vsprintf(msg, fmt, marker);
+	va_end(marker);
+	tputs(msg);
+	return result;
 }
 
 static long
@@ -116,44 +109,7 @@ makefptr(unsigned seg, unsigned off)
 	return v.ptr;
 }
 
-static void
-outso(int sseg, int soff)
-{
-	int len;
-	
-	len = _fstrlen(makefptr(sseg, soff));
-	_asm {
-		mov bx, fd
-		mov cx, len
-		mov ax, sseg
-		mov dx, soff
-		push ds
-		mov ds, ax
-		mov ah, 40h
-		int 21h
-		pop ds
-	}
-}
-
-/* Used for number conversions */
-
 static char buff[80];
-
-static void
-outdec(long v)
-{
-	ltoa(v, buff, 10);
-	outstring(buff);
-}
-
-static void
-outhex(int v)
-{
-	itoa(v, buff + 2, 16);
-	buff[0] = '0';
-	buff[1] = 'x';
-	outstring(buff);
-}
 
 static void
 outbuff(unsigned sseg, unsigned soff, unsigned len)
@@ -212,7 +168,7 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 		*s++ = '"';
 	}
 	*s++ = '\0';
-	outfstring(buff);
+	tputs(buff);
 }
 
 	
@@ -258,11 +214,13 @@ getdta(void)
 	return makefptr(sseg, soff);
 }
 
-static void
-outmode(unsigned mode)
+static char *
+strmode(unsigned mode)
 {
 	char *p = buff;
 
+	if (!stringprint)
+		return "";
 	*p++ = '[';
 	if (mode & 0x20) *p++ = 'a'; else *p++ = '-';
 	if (mode & 0x10) *p++ = 'd'; else *p++ = '-';
@@ -272,7 +230,7 @@ outmode(unsigned mode)
 	if (mode & 0x01) *p++ = 'r'; else *p++ = '-';
 	*p++ = ']';
 	*p++ = '\0';
-	outstring(buff);
+	return buff;
 }
 
 /*
@@ -295,37 +253,17 @@ outdta(void)
 	setpsp(tracedpsp);
 	d = getdta();
 	setpsp(psp);
-	outstring("ok\t(");
-	outfstring(d->name);
-	outstring(", ");
-	outdec(d->size);
-	outstring(", ");
-	outdec((d->date >> 9) + 80);
-	outstring("/");
-	outdec((d->date >> 5) & 0xf);
-	outstring("/");
-	outdec(d->date & 0x1f);
-	outstring(", ");
-	outdec(d->time >> 11);
-	outstring(":");
-	outdec((d->time >> 5) & 0x3f);
-	outstring(".");
-	outdec(d->time & 0x1f);
-	outstring(", ");
-	outmode(d->mode);
-	outstring(")\r\n");
+	tprintf("ok\t(%-12Fs %10lu %2u/%2u/%2u %2u:%02u.%-2u %s)\r\n", d->name, d->size, (d->date >> 9) + 80, (d->date >> 5) & 0xf, d->date & 0x1f, d->time >> 11, (d->time >> 5) & 0x3f, d->time & 0x1f, strmode(d->mode));
 }
 
 static void
 okerrorproc(unsigned flags, unsigned ax)
 {
 	setpsp(mypsp);
-	if (flags & 1) {
-		outstring("Error ");
-		outdec(ax);
-		outstring("\r\n");
-	} else
-		outstring("ok\r\n");
+	if (flags & 1)
+		tprintf("Error %u \r\n", ax);
+	else
+		tputs("ok\r\n");
 }
 
 static void
@@ -333,9 +271,8 @@ nerrorproc(unsigned flags, unsigned ax)
 {
 	setpsp(mypsp);
 	if (flags & 1)
-		outstring("Error ");
-	outdec(ax);
-	outstring("\r\n");
+		tputs("Error ");
+	tprintf("%u\r\n", ax);
 }
 
 #pragma check_stack()
@@ -477,19 +414,13 @@ dos_handler(
 	setpsp(mypsp);
 	switch (fun) {
 	case 0x25:				/* set_vector */
-		outstring("set_vector(");
-		outhex(_ax & 0xff);
-		outstring(", ");
-		outhex(_ds);
-		outstring(":");
-		outhex(_dx);
-		outstring(")\r\n");
+		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
 		setpsp(tracedpsp);
 		trace = 1;
 		_chain_intr(old_dos_handler);
 		break;
 	case 0x30:				/* get_version */
-		outstring("get_version() = ");
+		tputs("get_version() = ");
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -506,15 +437,10 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
-		outdec(_ax & 0xff);
-		outstring(".");
-		outdec(_ax >> 8);
-		outstring("\r\n");
+		tprintf("%u.%u\r\n", _ax & 0xff, _ax >> 8);
 		break;
 	case 0x35:				/* get_vector */
-		outstring("get_vector(");
-		outhex(_ax & 0xff);
-		outstring(") = ");
+		tprintf("get_vector(%#x) = ", _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -532,22 +458,18 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
-		outhex(_es);
-		outstring(":");
-		outhex(_bx);
-		outstring("\r\n");
+		tprintf("%04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x39:				/* Mkdir */
-		outstring("mkdir(\"");
+		tputs("mkdir(\"");
 		goto stringfun;
 	case 0x3a:				/* Rmdir */
-		outstring("rmdir(\"");
+		tputs("rmdir(\"");
 		goto stringfun;
 	case 0x3b:				/* Chdir */
-		outstring("chdir(\"");
+		tputs("chdir(\"");
 	stringfun:
-		outso(_ds, _dx);
-		outstring("\") = ");
+		tprintf("%Fs\") = ", makefptr(_ds, _dx));
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -575,13 +497,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3c:				/* Creat */
-		outstring("creat(\"");
-		outso(_ds, _dx);
-		outstring("\", ");
-		outhex(_cx);
-		if (stringprint)
-			outmode(_cx);
-		outstring(") = ");
+		tprintf("creat(\"%Fs\", %02x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -605,11 +521,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3d:				/* Open */
-		outstring("open(\"");
-		outso(_ds, _dx);
-		outstring("\", ");
-		outdec(_ax & 0xff);
-		outstring(") = ");
+		tprintf("open(\"%Fs\", %d) = ", makefptr(_ds, _dx), _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -632,9 +544,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x3e:				/* Close */
-		outstring("close(");
-		outdec(_bx);
-		outstring(") = ");
+		tprintf("close(%u) = ", _bx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -653,19 +563,12 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3f:				/* Read */
-		outstring("read(");
+		tputs("read(");
 		goto readwrite;
 	case 0x40:				/* Write */
-		outstring("write(");
+		tputs("write(");
 	readwrite:
-		outdec(_bx);
-		outstring(", ");
-		outhex(_ds);
-		outstring(":");
-		outhex(_dx);
-		outstring(", ");
-		outdec(_cx);
-		outstring(") = ");
+		tprintf("%u, %04X:%04X, %u) = ", _bx, _ds, _dx, _cx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -689,23 +592,17 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			outstring("Error ");
-		outdec(_ax);
+			tputs("Error ");
+		tprintf("%u", _ax);
 		if (stringprint)
 			outbuff(_ds, _dx, _ax);
-		outstring("\r\n");
+		tputs("\r\n");
 		break;
 	case 0x41:				/* Unlink */
-		outstring("unlink(\"");
+		tputs("unlink(\"");
 		goto stringfun;
 	case 0x42:				/* Lseek */
-		outstring("lseek(");
-		outdec(_bx);
-		outstring(", ");
-		outdec(makelong(_cx, _dx));
-		outstring(", ");
-		outdec(_ax & 0xff);
-		outstring(") = ");
+		tprintf("lseek(%u, %ld, %d) = ",_bx, makelong(_cx, _dx), _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -725,28 +622,22 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-		} else
-			outdec(makelong(_dx, _ax));
-		outstring("\r\n");
+		if (_flags & 1)
+			tprintf("Error %u\r\n", _ax);
+		else
+			tprintf("%ld\r\n", makelong(_dx, _ax));
 		break;
 	case 0x43:				/* Chmod / getmod */
 		if ((_ax & 0xff) == 0)
-			outstring("getmod(\"");
+			tputs("getmod(\"");
 		else if ((_ax & 0xff) == 1)
-			outstring("chmod(\"");
+			tputs("chmod(\"");
 		else
 			goto aka_default;
-		outso(_ds, _dx);
-		if (_ax & 0xff == 1) {
-			outstring("\", ");
-			outhex(_cx);
-			if (stringprint)
-				outmode(_cx);
-		}
-		outstring(") = ");
+		tprintf("%Fs", makefptr(_ds, _dx));
+		if (_ax & 0xff == 1)
+			tprintf("\", %#x%s", _cx, strmode(_cx));
+		tputs(") = ");
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -769,23 +660,18 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-		} else {
-			if (_ax & 0xff == 0) {
-				outdec(_cx);
-				if (stringprint)
-					outmode(_cx);
-			} else
-				outstring("ok");
+		if (_flags & 1)
+			tprintf("Error %u", _ax);
+		else {
+			if (_ax & 0xff == 0)
+				tprintf("%u%s", _cx, strmode(_cx));
+			else
+				tputs("ok");
 		}
-		outstring("\r\n");
+		tputs("\r\n");
 		break;
 	case 0x45:				/* Dup */
-		outstring("dup(");
-		outdec(_bx);
-		outstring(") = ");
+		tprintf("dup(%u) = ", _bx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -804,11 +690,7 @@ dos_handler(
 		nerrorproc(_flags, _ax);
 		break;
 	case 0x46:				/* Dup2 */
-		outstring("dup2(");
-		outdec(_bx);
-		outstring(", ");
-		outdec(_cx);
-		outstring(") = ");
+		tprintf("dup2(%u, %u) = ", _bx, _cx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -828,13 +710,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x47:				/* Getcwd */
-		outstring("getcwd(");
-		outdec(_dx & 0xff);
-		outstring(", ");
-		outhex(_ds);
-		outstring(":");
-		outhex(_si);
-		outstring(") = ");
+		tprintf("getcwd(%d, %04X:%04X) = ", _dx & 0xff, _ds, _si);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -856,23 +732,17 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\r\n");
-		} else {
-			if (stringprint) {
-				outstring("ok\t\"");
-				outfstring(makefptr(_ds, _si));
-				outstring("\"\r\n");
-			} else
-				outstring("ok\r\n");
+		if (_flags & 1)
+			tprintf("Error %u\r\n", _ax);
+		else {
+			if (stringprint)
+				tprintf("ok\t\"%Fs\"\r\n", makefptr(_ds, _si));
+			else
+				tputs("ok\r\n");
 		}
 		break;
 	case 0x48:				/* Alloc */
-		outstring("alloc(");
-		outhex(_bx);
-		outstring("0) = ");
+		tprintf("alloc(%#x0)= ", _bx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -890,21 +760,13 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\t(free = ");
-			outhex(_bx);
-			outstring("0 bytes)\r\n");
-		} else {
-			outhex(_ax);
-			outstring(":0\r\n");
-		}
+		if (_flags & 1)
+			tprintf("Error %u\t(free = %#x0 bytes)\r\n", _ax, _bx);
+		else
+			tprintf("%04X:0000\r\n", _ax);
 		break;
 	case 0x49:				/* Free */
-		outstring("free(");
-		outhex(_es);
-		outstring(":0) = ");
+		tprintf("free(%04X:0000) = ", _es);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -926,11 +788,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4a:				/* Realloc */
-		outstring("realloc(");
-		outhex(_es);
-		outstring(":0, ");
-		outhex(_bx);
-		outstring("0) = ");
+		tprintf("realloc(%04X:0000, %#x0) = ", _es, _bx);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -952,22 +810,17 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\t(free = ");
-			outhex(_bx);
-			outstring("0 bytes)\r\n");
-		} else
-			outstring("ok\r\n");
+		if (_flags & 1)
+			tprintf("Error %u\t(free = %#x0 bytes)\r\n", _ax, _bx);
+		else
+			tputs("ok\r\n");
 		break;
 	case 0x4b:				/* Exec */
-		outstring("exec(\"");
-		outso(_ds, _dx);
+		tprintf("exec(\"%Fs", makefptr(_ds, _dx));
 		if (tracechildren)
-			outstring("\") = ...\r\n");
+			tputs("\") = ...\r\n");
 		else
-			outstring("\") = ");
+			tputs("\") = ");
 		setpsp(tracedpsp);
 		if (tracechildren) {
 			trace = 1;
@@ -999,9 +852,7 @@ dos_handler(
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x4c:				/* Exit */
-		outstring("exit(");
-		outdec(_ax & 0xff);
-		outstring(")\r\n");
+		tprintf("exit(%d)\r\n", _ax & 0xff);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -1017,13 +868,7 @@ dos_handler(
 		}
 		break;
 	case 0x4e:				/* Findfirst */
-		outstring("findfirst(\"");
-		outso(_ds, _dx);
-		outstring("\", ");
-		outhex(_cx);
-		if (stringprint)
-			outmode(_cx);
-		outstring(") = ");
+		tprintf("findfirst(\"%Fs\", %#x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -1045,19 +890,17 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\r\n");
-		} else {
+		if (_flags & 1)
+			tprintf("Error %u\r\n", _ax);
+		else {
 			if (stringprint)
 				outdta();
 			else
-				outstring("ok\r\n");
+				tputs("ok\r\n");
 		}
 		break;
 	case 0x4f:				/* Findnext */
-		outstring("findnext() = ");
+		tputs("findnext() = ");
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -1073,23 +916,17 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1) {
-			outstring("Error ");
-			outdec(_ax);
-			outstring("\r\n");
-		} else {
+		if (_flags & 1)
+			tprintf("Error %u\r\n", _ax);
+		else {
 			if (stringprint)
 				outdta();
 			else
-				outstring("ok\r\n");
+				tputs("ok\r\n");
 		}
 		break;
 	case 0x5a:				/* Tmpfile */
-		outstring("tmpfile(\"");
-		outso(_ds, _dx);
-		outstring("\", ");
-		outhex(_cx & 0xff);
-		outstring(") = ");
+		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx), _cx & 0xff);
 		setpsp(tracedpsp);
 		_asm {
 			pushf
@@ -1115,29 +952,14 @@ dos_handler(
 	aka_default:
 	default:
 		if (otherprint) {
-			if (nameprint && fun <= 0x62) {
-				outstring(funcs[fun]);
-			} else
-				outhex(fun);
-			if (regdump) {
-				outstring(" :ax=");
-				outhex(_ax);
-				outstring(" bx=");
-				outhex(_bx);
-				outstring(" cx=");
-				outhex(_cx);
-				outstring(" dx=");
-				outhex(_dx);
-				outstring(" si=");
-				outhex(_si);
-				outstring(" di=");
-				outhex(_di);
-				outstring(" ds=");
-				outhex(_ds);
-				outstring(" es=");
-				outhex(_es);
-			}
-			outstring("\r\n");
+			if (nameprint && fun <= 0x62)
+				tputs(funcs[fun]);
+			else
+				tprintf("%02x", fun);
+			if (regdump)
+				tprintf(" :ax=%04X bx=%04X cx=%04X dx=%04X si=%04X di=%04X ds=%04X es=%04X\r\n", _ax, _bx, _cx, _dx, _si, _di, _ds, _es);
+			else
+				tputs("\r\n");
 		}
 		setpsp(tracedpsp);
 		trace = 1;
@@ -1215,7 +1037,6 @@ main(int argc, char *argv[])
 		perror(fname);
 		return 1;
 	}
-
 	mypsp = getpsp();
 	critsectflag = getcritsectflag();
 	if (_osmajor == 2)
