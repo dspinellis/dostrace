@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.16 1991/05/27 18:42:19 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.17 1991/05/27 22:12:31 dds Exp $
  *
  */
 
@@ -18,17 +18,21 @@
 #include <process.h>
 #include <ctype.h>
 #include <time.h>
+#include <signal.h>
+#include <bios.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.16 1991/05/27 18:42:19 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.17 1991/05/27 22:12:31 dds Exp $";
 #endif
 
-#define MAXBUFF 80
+#define MAXBUFF 1025
 
-static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint;
+static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint;
 static unsigned datalen = 15;
+static someprefix;
 
 static mypsp, tracedpsp;
+static execed;
 static char _far *critsectflag;
 static char _far *criterrflag;
 
@@ -346,23 +350,93 @@ outdta(void)
 	tprintf("ok\t(%-12Fs %10lu %2u/%2u/%2u %2u:%02u.%-2u %s)\r\n", d->name, d->size, (d->date >> 9) + 80, (d->date >> 5) & 0xf, d->date & 0x1f, d->time >> 11, (d->time >> 5) & 0x3f, d->time & 0x1f, strmode(d->mode));
 }
 
+char *errcodes[] = {
+	"Error 0",
+	"Invalid function code",
+	"File not found",
+	"Path not found",
+	"Too many open files",
+	"Access denied",
+	"Invalid handle",
+	"Memory control blocks destroyed",
+	"Insufficient memory",
+	"Invalid memory block address",
+	"Invalid environment",
+	"Invalid format",
+	"Invalid access code",
+	"Invalid data",
+	"Reserved 14",
+	"Invalid drive",
+	"Attempt to remove current directory",
+	"Not same device",
+	"No more files",
+	"Disk is write-protected",
+	"Bad disk unit",
+	"Drive not ready",
+	"Invalid disk command",
+	"CRC error",
+	"Invalid length",
+	"Seek error",
+	"Not an MS-DOS disk",
+	"Sector not found",
+	"Out of paper",
+	"Write fault",
+	"Read fault",
+	"General failure",
+	"Sharing violation",
+	"Lock violation",
+	"Wrong disk",
+	"FCB unavailable",
+};
+
+/*
+ * Print error without newline
+ */
+static void
+errprint(int err)
+{
+	if (worderror && err <= 35)
+		tprintf("Error (%s)", errcodes[err]);
+	else
+		tprintf("Error (%u)", err);
+}
+
+/*
+ * Print error with newline
+ */
+static void
+errprintln(int err)
+{
+	if (worderror && err <= 35)
+		tprintf("Error (%s)\r\n", errcodes[err]);
+	else
+		tprintf("Error (%u)\r\n", err);
+}
+
+/*
+ * Print error or ok
+ */
 static void
 okerrorproc(unsigned flags, unsigned ax)
 {
 	setpsp(mypsp);
 	if (flags & 1)
-		tprintf("Error %u \r\n", ax);
+		errprintln(ax);
 	else
 		tputs("ok\r\n");
 }
 
+/*
+ * Print error
+ */
 static void
 nerrorproc(unsigned flags, unsigned ax)
 {
 	setpsp(mypsp);
 	if (flags & 1)
-		tputs("Error ");
-	tprintf("%u\r\n", ax);
+		errprintln(ax);
+	else
+		tprintf("%u\r\n", ax);
 }
 
 static void
@@ -376,110 +450,125 @@ print_time(void)
 
 #pragma check_stack()
 
-char *funcs[] =
+struct s_func {
+	char *name;
+	unsigned count;
+} funcs[256] =
 {
-	"terminate",		/* 00H	DOS1 - TERMINATE PROGRAM */
-	"key_in_echo",		/* 01H	DOS1 - KEYBOARD INPUT WITH ECHO */
-	"disp_out",		/* 02H	DOS1 - DISPLAY OUTPUT */
-	"serial_in",		/* 03H	DOS1 - SERIAL INPUT */
-	"serial_out",		/* 04H	DOS1 - SERIAL OUTPUT */
-	"printer_out",		/* 05H	DOS1 - PRINTER OUTPUT */
-	"console_io",		/* 06H	DOS1 - DIRECT CONSOLE I/O */
-	"dir_key_in",		/* 07H	DOS1 - DIRECT KEYBOARD INPUT */
-	"key_in",		/* 08H	DOS1 - KEYBOARD INPUT WITHOUT ECHO */
-	"disp_string",		/* 09H	DOS1 - DISPLAY STRING */
-	"buf_key_in",		/* 0AH	DOS1 - BUFFERED KEYBOARD INPUT */
-	"chk_key_stat",		/* 0BH	DOS1 - CHECK KEYBOARD STATUS */
-	"clr_key_func",		/* 0CH	DOS1 - CLEAR KEY BUFFER AND PERFORM FUNCTION */
-	"reset_disk",		/* 0DH	DOS1 - RESET DISK */
-	"sel_drive",		/* 0EH	DOS1 - SELECT CURRENT DRIVE */
-	"open_file",		/* 0FH	DOS1 - OPEN FILE */
-	"close_file",		/* 10H	DOS1 - CLOSE FILE */
-	"search_first",		/* 11H	DOS1 - SEARCH FOR FIRST MATCHING FILE */
-	"search_next",		/* 12H	DOS1 - SEARCH FOR NEXT MATCHING FILE */
-	"delete_file",		/* 13H	DOS1 - DELETE FILE */
-	"rd_seq_rec",		/* 14H	DOS1 - READ SEQUENTIAL RECORD */
-	"wr_seq_rec",		/* 15H	DOS1 - WRITE SEQUENTIAL RECORD */
-	"create_file",		/* 16H	DOS1 - CREATE FILE */
-	"rename_file",		/* 17H	DOS1 - RENAME FILE */
-	"reserved 0x18",	/* 18h */
-	"rd_cur_drive",		/* 19H	DOS1 - REPORT CURRENT DRIVE */
-	"set_dta",		/* 1AH	DOS1 - SET DISK TRANSFER AREA FUCNTION */
-	"rd_fat_1",		/* 1BH	DOS1 - READ CURRENT DRIVE'S FAT */
-	"rd_fat_2",		/* 1CH	DOS1 - READ ANY DRIVE'S FAT */
-	"reserved 0x1d",	/* 1dh */
-	"reserved 0x1e",	/* 1eh */
-	"reserved 0x1f",	/* 1fh */
-	"reserved 0x20",	/* 20h */
-	"rd_ran_rec1",		/* 21H	DOS1 - READ RANDOM FILE RECORD */
-	"wr_ran_rec1",		/* 22H	DOS1 - WRITE RANDOM FILE RECORD */
-	"rd_file_size",		/* 23H	DOS1 - REPORT FILE SIZE */
-	"set_ran_rec",		/* 24H	DOS1 - SET RANDOM RECORD FIELD SIZE */
-	"set_int_vec",		/* 25H	DOS1 - SET INTERRUPT VECTOR */
-	"create_seg",		/* 26H	DOS1 - CREATE PROGRAM SEGMENT FUCNTION */
-	"rd_ran_rec2",		/* 27H	DOS1 - READ RANDOM FILE RECORD */
-	"wr_ran_rec2",		/* 28H	DOS1 - WRITE RANDOM FILE RECORD FUCNTION */
-	"parse_name",		/* 29H	DOS1 - PARSE FILENAME */
-	"get_date",		/* 2AH	DOS1 - GET DATE */
-	"set_date",		/* 2BH	DOS1 - SET DATE */
-	"get_time",		/* 2CH	DOS1 - GET TIME */
-	"set_time",		/* 2DH	DOS1 - SET TIME */
-	"set_verify",		/* 2EH	DOS1 - SET DISK WRITE VERIFICATION MODE */
-	"get_dta",		/* 2FH	DOS2 - GET DISK TRANSFER AREA ADDRESS */
-	"get_ver",		/* 30H	DOS2 - GET DOS VERSION NUMBER */
-	"keep",			/* 31H	DOS2 - ADVANCED TERMINATE BUT STAY RESIDENT */
-	"reserved 0x32",	/* 32h */
-	"cntrl_brk",		/* 33H	DOS2 - GET/SET CONTROL BREAK STATUS */
-	"critical_flag",	/* 34h */
-	"get_int_vec",		/* 35H	DOS2 - GET INTERRUPT VECTOR */
-	"get_space",		/* 36H	DOS2 - GET DISK FREE SPACE */
-	"switchar",		/* 37h */
-	"get_country",		/* 38H	DOS2 - GET COUNTRY INFORMATION */
-	"mkdir",		/* 39H	DOS2 - MAKE DIRECTORY */
-	"rmdir",		/* 3AH	DOS2 - REMOVE DIRECTORY */
-	"chdir",		/* 3BH	DOS2 - CHANGE CURRENT DIRECTORY FUCNTION */
-	"create",		/* 3CH	DOS2 - CREATE FILE */
-	"open",			/* 3DH	DOS2 - OPEN FILE */
-	"close",		/* 3EH	DOS2 - CLOSE FILE */
-	"read",			/* 3FH	DOS2 - READ FILE/DEVICE */
-	"write",		/* 40H	DOS2 - WRITE FILE/DEVICE */
-	"delete",		/* 41H	DOS2 - DELETE FILE */
-	"lseek",		/* 42H	DOS2 - MOVE FILE POINTER */
-	"chmod",		/* 43H	DOS2 - CHANGE FILE MODE */
-	"ioctl",		/* 44H	DOS2 - DEVICE I/O CONTROL */
-	"dup",			/* 45H	DOS2 - DUPLICATE FILE HANDLE */
-	"cdup",			/* 46H	DOS2 - FORCE FILE HANDLE DUPLICATION */
-	"get_dir",		/* 47H	DOS2 - GET CURRENT DIRECTORY */
-	"allocate",		/* 48H	DOS2 - ALLOCATE MEMORY */
-	"free",			/* 49H	DOS2 - FREE MEMORY */
-	"set_block",		/* 4AH	DOS2 - MODIFY ALLOCATED MEMORY BLOCK */
-	"exec",			/* 4BH	DOS2 - LOAD/EXECUTE PROGRAM */
-	"term_proc",		/* 4CH	DOS2 - TERMINATE PROCESS */
-	"get_code",		/* 4DH	DOS2 - GET SUBPROGRAM RETURN CODE */
-	"find_first",		/* 4EH	DOS2 - FIND FIRST FILE MATCH */
-	"find_next",		/* 4FH	DOS2 - FIND NEXT FILE MATCH */
-	"set_psp",		/* 50h */
-	"get_psp",		/* 51h */
-	"get_handle_addr",	/* 52h */
-	"reserved 0x53",	/* 53h */
-	"get_verify",		/* 54H	DOS2 - GET FILE WRITE VERIFY STATE */
-	"reserved 0x55",	/* 55h */
-	"rename",		/* 56H	DOS2 - RENAME FILE */
-	"date_time",		/* 57H	DOS2 - GET/SET FILE DATE/TIME */
-	"alloc_strategy",	/* 58h */
-	"get_err",		/* 59H	DOS3 - GET EXTENDED RETURN CODE */
-	"create_temp",		/* 5AH	DOS3 - CREATE TEMPORARY FILE */
-	"create_new",		/* 5BH	DOS3 - CREATE NEW FILE */
-	"file_lock",		/* 5CH	DOS3 - LOCK/UNLOCK FILE ACCESS */
-	"reserved 0x5d",	/* 5dh */
-	"machine_name",		/* 5eh */
-	"assign_list",		/* 5fh */
-	"reserved 0x60",	/* 60h */
-	"reserved 0x61",	/* 61h */
-	"get_psp",		/* 62H	DOS3 - GET PROGRAM SEGMENT PREFIX ADDRESS */
+	{"terminate", 0},		/* 00H	DOS1 - TERMINATE PROGRAM */
+	{"key_in_echo", 0},		/* 01H	DOS1 - KEYBOARD INPUT WITH ECHO */
+	{"disp_out", 0},		/* 02H	DOS1 - DISPLAY OUTPUT */
+	{"serial_in", 0},		/* 03H	DOS1 - SERIAL INPUT */
+	{"serial_out", 0},		/* 04H	DOS1 - SERIAL OUTPUT */
+	{"printer_out", 0},		/* 05H	DOS1 - PRINTER OUTPUT */
+	{"console_io", 0},		/* 06H	DOS1 - DIRECT CONSOLE I/O */
+	{"dir_key_in", 0},		/* 07H	DOS1 - DIRECT KEYBOARD INPUT */
+	{"key_in", 0},			/* 08H	DOS1 - KEYBOARD INPUT WITHOUT ECHO */
+	{"disp_string", 0},		/* 09H	DOS1 - DISPLAY STRING */
+	{"buf_key_in", 0},		/* 0AH	DOS1 - BUFFERED KEYBOARD INPUT */
+	{"chk_key_stat", 0},		/* 0BH	DOS1 - CHECK KEYBOARD STATUS */
+	{"clr_key_func", 0},		/* 0CH	DOS1 - CLEAR KEY BUFFER AND PERFORM FUNCTION */
+	{"reset_disk", 0},		/* 0DH	DOS1 - RESET DISK */
+	{"sel_drive", 0},		/* 0EH	DOS1 - SELECT CURRENT DRIVE */
+	{"open_file", 0},		/* 0FH	DOS1 - OPEN FILE */
+	{"close_file", 0},		/* 10H	DOS1 - CLOSE FILE */
+	{"search_first", 0},		/* 11H	DOS1 - SEARCH FOR FIRST MATCHING FILE */
+	{"search_next", 0},		/* 12H	DOS1 - SEARCH FOR NEXT MATCHING FILE */
+	{"delete_file", 0},		/* 13H	DOS1 - DELETE FILE */
+	{"rd_seq_rec", 0},		/* 14H	DOS1 - READ SEQUENTIAL RECORD */
+	{"wr_seq_rec", 0},		/* 15H	DOS1 - WRITE SEQUENTIAL RECORD */
+	{"create_file", 0},		/* 16H	DOS1 - CREATE FILE */
+	{"rename_file", 0},		/* 17H	DOS1 - RENAME FILE */
+	{"reserved 0x18", 0},		/* 18h */
+	{"rd_cur_drive", 0},		/* 19H	DOS1 - REPORT CURRENT DRIVE */
+	{"set_dta", 0},			/* 1AH	DOS1 - SET DISK TRANSFER AREA FUCNTION */
+	{"rd_fat_1", 0},		/* 1BH	DOS1 - READ CURRENT DRIVE'S FAT */
+	{"rd_fat_2", 0},		/* 1CH	DOS1 - READ ANY DRIVE'S FAT */
+	{"reserved 0x1d", 0},		/* 1dh */
+	{"reserved 0x1e", 0},		/* 1eh */
+	{"reserved 0x1f", 0},		/* 1fh */
+	{"reserved 0x20", 0},		/* 20h */
+	{"rd_ran_rec1", 0},		/* 21H	DOS1 - READ RANDOM FILE RECORD */
+	{"wr_ran_rec1", 0},		/* 22H	DOS1 - WRITE RANDOM FILE RECORD */
+	{"rd_file_size", 0},		/* 23H	DOS1 - REPORT FILE SIZE */
+	{"set_ran_rec", 0},		/* 24H	DOS1 - SET RANDOM RECORD FIELD SIZE */
+	{"set_int_vec", 0},		/* 25H	DOS1 - SET INTERRUPT VECTOR */
+	{"create_seg", 0},		/* 26H	DOS1 - CREATE PROGRAM SEGMENT FUCNTION */
+	{"rd_ran_rec2", 0},		/* 27H	DOS1 - READ RANDOM FILE RECORD */
+	{"wr_ran_rec2", 0},		/* 28H	DOS1 - WRITE RANDOM FILE RECORD FUCNTION */
+	{"parse_name", 0},		/* 29H	DOS1 - PARSE FILENAME */
+	{"get_date", 0},		/* 2AH	DOS1 - GET DATE */
+	{"set_date", 0},		/* 2BH	DOS1 - SET DATE */
+	{"get_time", 0},		/* 2CH	DOS1 - GET TIME */
+	{"set_time", 0},		/* 2DH	DOS1 - SET TIME */
+	{"set_verify", 0},		/* 2EH	DOS1 - SET DISK WRITE VERIFICATION MODE */
+	{"get_dta", 0},			/* 2FH	DOS2 - GET DISK TRANSFER AREA ADDRESS */
+	{"get_ver", 0},			/* 30H	DOS2 - GET DOS VERSION NUMBER */
+	{"keep", 0},			/* 31H	DOS2 - ADVANCED TERMINATE BUT STAY RESIDENT */
+	{"reserved 0x32", 0},		/* 32h */
+	{"cntrl_brk", 0},		/* 33H	DOS2 - GET/SET CONTROL BREAK STATUS */
+	{"critical_flag", 0},		/* 34h */
+	{"get_int_vec", 0},		/* 35H	DOS2 - GET INTERRUPT VECTOR */
+	{"get_space", 0},		/* 36H	DOS2 - GET DISK FREE SPACE */
+	{"switchar", 0},			/* 37h */
+	{"get_country", 0},		/* 38H	DOS2 - GET COUNTRY INFORMATION */
+	{"mkdir", 0},			/* 39H	DOS2 - MAKE DIRECTORY */
+	{"rmdir", 0},			/* 3AH	DOS2 - REMOVE DIRECTORY */
+	{"chdir", 0},			/* 3BH	DOS2 - CHANGE CURRENT DIRECTORY FUCNTION */
+	{"create", 0},			/* 3CH	DOS2 - CREATE FILE */
+	{"open", 0},			/* 3DH	DOS2 - OPEN FILE */
+	{"close", 0},			/* 3EH	DOS2 - CLOSE FILE */
+	{"read", 0},			/* 3FH	DOS2 - READ FILE/DEVICE */
+	{"write", 0},			/* 40H	DOS2 - WRITE FILE/DEVICE */
+	{"delete", 0},			/* 41H	DOS2 - DELETE FILE */
+	{"lseek", 0},			/* 42H	DOS2 - MOVE FILE POINTER */
+	{"chmod", 0},			/* 43H	DOS2 - CHANGE FILE MODE */
+	{"ioctl", 0},			/* 44H	DOS2 - DEVICE I/O CONTROL */
+	{"dup", 0},			/* 45H	DOS2 - DUPLICATE FILE HANDLE */
+	{"cdup", 0},			/* 46H	DOS2 - FORCE FILE HANDLE DUPLICATION */
+	{"get_dir", 0},			/* 47H	DOS2 - GET CURRENT DIRECTORY */
+	{"allocate", 0},		/* 48H	DOS2 - ALLOCATE MEMORY */
+	{"free", 0},			/* 49H	DOS2 - FREE MEMORY */
+	{"set_block", 0},		/* 4AH	DOS2 - MODIFY ALLOCATED MEMORY BLOCK */
+	{"exec", 0},			/* 4BH	DOS2 - LOAD/EXECUTE PROGRAM */
+	{"term_proc", 0},		/* 4CH	DOS2 - TERMINATE PROCESS */
+	{"get_code", 0},		/* 4DH	DOS2 - GET SUBPROGRAM RETURN CODE */
+	{"find_first", 0},		/* 4EH	DOS2 - FIND FIRST FILE MATCH */
+	{"find_next", 0},		/* 4FH	DOS2 - FIND NEXT FILE MATCH */
+	{"set_psp", 0},			/* 50h */
+	{"get_psp", 0},			/* 51h */
+	{"get_handle_addr", 0},		/* 52h */
+	{"reserved 0x53", 0},		/* 53h */
+	{"get_verify", 0},		/* 54H	DOS2 - GET FILE WRITE VERIFY STATE */
+	{"reserved 0x55", 0},		/* 55h */
+	{"rename", 0},			/* 56H	DOS2 - RENAME FILE */
+	{"date_time", 0},		/* 57H	DOS2 - GET/SET FILE DATE/TIME */
+	{"alloc_strategy", 0},		/* 58h */
+	{"get_err", 0},			/* 59H	DOS3 - GET EXTENDED RETURN CODE */
+	{"create_temp", 0},		/* 5AH	DOS3 - CREATE TEMPORARY FILE */
+	{"create_new", 0},		/* 5BH	DOS3 - CREATE NEW FILE */
+	{"file_lock", 0},		/* 5CH	DOS3 - LOCK/UNLOCK FILE ACCESS */
+	{"reserved 0x5d", 0},		/* 5dh */
+	{"machine_name", 0},		/* 5eh */
+	{"assign_list", 0},		/* 5fh */
+	{"reserved 0x60", 0},		/* 60h */
+	{"reserved 0x61", 0},		/* 61h */
+	{"get_psp", 0},			/* 62H	DOS3 - GET PROGRAM SEGMENT PREFIX ADDRESS */
 };
 
-#define prefix() do { if (timeprint) print_time(); } while (0)
+
+static void
+prefixfun(int fun)
+{
+	if (timeprint)
+		print_time();
+	if (pspprint)
+		tprintf("%04x ", tracedpsp);
+	if (numprint)
+		tprintf("%02x ", fun);
+}
+
+#define prefix() do { if (someprefix) prefixfun(fun); } while (0)
 
 /* The dos interrupt handler */
 static void _cdecl _interrupt _far
@@ -499,7 +588,6 @@ dos_handler(
 	unsigned _flags)
 {
 	static trace = 1;
-	static execed;
 	int fun;
 
 	fun = _ax >> 8;
@@ -513,6 +601,15 @@ dos_handler(
 		_chain_intr(old_dos_handler);
 	trace = 0;
 	tracedpsp = getpsp();
+	if (tracetsr && tracedpsp != tsrpsp) {
+		trace = 1;
+		_chain_intr(old_dos_handler);
+	}
+	if (count) {
+		funcs[fun].count++;
+		trace = 1;
+		_chain_intr(old_dos_handler);
+	}
 	setpsp(mypsp);
 	switch (fun) {
 	case 0x02:				/* disp_out */
@@ -877,8 +974,9 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tputs("Error ");
-		tprintf("%u", _ax);
+			errprint(_ax);
+		else
+			tprintf("%u", _ax);
 		if (stringprint)
 			outbuff(_ds, _dx, _ax);
 		tputs("\r\n");
@@ -910,7 +1008,7 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tprintf("Error %u\r\n", _ax);
+			errprintln(_ax);
 		else
 			tprintf("%ld\r\n", makelong(_dx, _ax));
 		break;
@@ -954,7 +1052,7 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tprintf("Error %u", _ax);
+			errprint(_ax);
 		else {
 			if (_ax & 0xff == 0)
 				tprintf("%u%s", _cx, strmode(_cx));
@@ -987,7 +1085,7 @@ dos_handler(
 			}
 			setpsp(mypsp);
 			if (_flags & 1)
-				tprintf("Error %u\r\n", _ax);
+				errprintln(_ax);
 			else {
 				if (stringprint)
 					devinfo(_dx);
@@ -1063,7 +1161,7 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tprintf("Error %u\r\n", _ax);
+			errprintln(_ax);
 		else {
 			if (stringprint)
 				tprintf("ok\t\"%Fs\"\r\n", makefptr(_ds, _si));
@@ -1091,9 +1189,10 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1)
-			tprintf("Error %u\t(free = %#x0 bytes)\r\n", _ax, _bx);
-		else
+		if (_flags & 1) {
+			errprint(_ax);
+			tprintf("\t(free = %#x0 bytes)\r\n", _bx);
+		} else
 			tprintf("%04X:0000\r\n", _ax);
 		break;
 	case 0x49:				/* Free */
@@ -1143,9 +1242,10 @@ dos_handler(
 			popf
 		}
 		setpsp(mypsp);
-		if (_flags & 1)
-			tprintf("Error %u\t(free = %#x0 bytes)\r\n", _ax, _bx);
-		else
+		if (_flags & 1) {
+			errprint(_ax);
+			tprintf("\t(free = %#x0 bytes)\r\n", _bx);
+		} else
 			tputs("ok\r\n");
 		break;
 	case 0x4b:				/* Exec */
@@ -1232,7 +1332,7 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tprintf("Error %u\r\n", _ax);
+			errprintln(_ax);
 		else {
 			if (stringprint)
 				outdta();
@@ -1259,7 +1359,7 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
-			tprintf("Error %u\r\n", _ax);
+			errprintln(_ax);
 		else {
 			if (stringprint)
 				outdta();
@@ -1335,7 +1435,7 @@ dos_handler(
 		if (otherprint) {
 			prefix();
 			if (nameprint && fun <= 0x62)
-				tputs(funcs[fun]);
+				tputs(funcs[fun].name);
 			else
 				tprintf("%02x", fun);
 			if (regdump)
@@ -1352,6 +1452,13 @@ dos_handler(
 	trace = 1;
 }
 
+void
+restore_handler(int sig)
+{
+	/* Restore old handler */
+	_dos_setvect(DOS_INT, old_dos_handler);
+}
+
 int getopt(int, char **, char *);
 
 int
@@ -1362,19 +1469,39 @@ main(int argc, char *argv[])
 	extern char *optarg;
 	char *fname = "trace.log";
 	int errflag = 0;
-	char *usagestring = "usage: trace [-f fname] [-l len] [-help] [-vrsoxnc] command options ...\n";
+	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-acfinrstvwx] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.16 $", revision[30];
+	static char revstring[] = "$Revision: 1.17 $", revision[30];
+	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
 	*strchr(revision, '$') = '\0';
-	while ((c = getopt(argc, argv, "f:h:sxol:ntrvc")) != EOF)
+	strlwr(argv[0]);
+	if (p = strrchr(argv[0], '\\'))
+		argv[0] = p + 1;
+	if (p = strrchr(argv[0], '/'))
+		argv[0] = p + 1;
+	if (p = strrchr(argv[0], '.'))
+		*p = '\0';
+	if (!*argv[0])
+		argv[0] = "trace";
+	while ((c = getopt(argc, argv, "afo:h:sxl:nitrevcp:w")) != EOF)
 		switch (c) {
-		case 'c':
+		case 'i':			/* Print psp */
+			pspprint = 1;
+			break;
+		case 'p':
+			tsrpsp = atoi(optarg);
+			tracetsr = 1;
+			break;
+		case 'e':
 			tracechildren = 1;
 			break;
 		case 'v':
-			timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			pspprint = worderror = numprint = timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
+			break;
+		case 'f':			/* Print function number */
+			numprint = 1;
 			break;
 		case 't':			/* Print time of each call */
 			timeprint = 1;
@@ -1382,53 +1509,67 @@ main(int argc, char *argv[])
 		case 'r':			/* Dump registers */
 			regdump = 1;
 			break;
-		case 'f':			/* Output file */
+		case 'o':			/* Output file */
 			fname = optarg ;
 			break ;
+		case 'w':			/* Print errors as words */
+			worderror = 1;
+			break;
+		case 'c':			/* Produce summary count */
+			count = 1;
+			break;
 		case 's':			/* Print strings in I/O */
 			stringprint = 1;
 			break;
 		case 'x':			/* Print binary data in I/O */
 			hexprint = 1;
 			break;
-		case 'o':			/* Print other DOS functions */
+		case 'a':			/* Print all DOS functions */
 			otherprint = 1;
 			break;
 		case 'n':			/* Print names of other DOS functions */
 			nameprint = 1;
 			break;
-		case 'l':
+		case 'l':			/* Specify length */
 			datalen = atoi(optarg);
-			if (datalen >= MAXBUFF)
+			if (datalen >= MAXBUFF) {
+				fprintf(stderr, "%s: Data length %u is greater than maximum length %u.  %u used.\n", argv[0], datalen, MAXBUFF - 1, MAXBUFF - 1);
 				datalen = MAXBUFF - 1;
+			}
 			break;
 		case 'h':			/* Help */
-			fputs(usagestring, stderr);
 			fprintf(stderr, "Trace Version %s (C) Copyright 1991 D. Spinellis.  All rights reserved.\n", revision);
-			fputs("-f\tSpecify output file name\n", stderr);
-			fputs("-s\tPrint I/O strings\n", stderr);
-			fputs("-x\tPrint I/O binary data (needs -s)\n", stderr);
-			fputs("-l\tSpecify I/O printed data length\n", stderr);
-			fputs("-o\tTrace other functions\n", stderr);
-			fputs("-c\tTrace children processes\n", stderr);
+			fprintf(stderr, usagestring, argv[0]);
+			fputs("-a\tTrace all DOS functions\n", stderr);
+			fputs("-c\tProduce a count summary only\n", stderr);
+			fputs("-e\tTrace across exec calls\n", stderr);
+			fputs("-f\tPrefix calls with function number\n", stderr);
+			fputs("-h\tPrint this list\n", stderr);
+			fputs("-i\tPrefix calls with process id (psp address)\n", stderr);
+			fputs("-l L\tSpecify I/O printed data length\n", stderr);
 			fputs("-n\tPrint other functions by name\n", stderr);
-			fputs("-t\tPrefix each line with the time\n", stderr);
+			fputs("-o F\tSpecify output file name\n", stderr);
+			fputs("-p P\tTrace resident process with PSP P\n", stderr);
 			fputs("-r\tDump registers on other functions\n", stderr);
-			fputs("-v\tVerbose (-sxonrct)\n", stderr);
-			fputs("-h\tPrint this message\n", stderr);
+			fputs("-s\tPrint I/O strings\n", stderr);
+			fputs("-t\tPrefix calls with time\n", stderr);
+			fputs("-v\tVerbose (-aefinrstwx)\n", stderr);
+			fputs("-w\tPrint errors as words\n", stderr);
+			fputs("-x\tPrint I/O binary data (needs -s)\n", stderr);
 			return 0;
 		case '?':			/* Error */
 			errflag = 1;
 			break ;
 		}
-	if (errflag || optind == argc) {
-		fputs(usagestring, stderr);
+	if (errflag) {
+		fprintf(stderr, usagestring, argv[0]);
 		return 2;
 	}
 	if ((fd = open(fname, O_CREAT | O_TRUNC | O_TEXT | O_WRONLY, 0666)) == -1) {
 		perror(fname);
 		return 1;
 	}
+	someprefix = pspprint | timeprint | numprint;
 	mypsp = getpsp();
 	critsectflag = getcritsectflag();
 	if (_osmajor == 2)
@@ -1437,16 +1578,29 @@ main(int argc, char *argv[])
 		criterrflag = critsectflag - 1;
 	/* Save old handler and install new one */
 	old_dos_handler = _dos_getvect(DOS_INT);
+	(void)signal(SIGABRT, restore_handler);
+	(void)signal(SIGBREAK, restore_handler);
+	(void)signal(SIGINT, restore_handler);
+	(void)signal(SIGTERM, restore_handler);
 	_dos_setvect(DOS_INT, dos_handler);
-	/* 
-	 * XXX If the program is terminated during spawn by a signal
-	 * and does not exit normaly the system will crash.
-	 */
-
-	status=spawnvp(P_WAIT, argv[optind], argv + optind);
-
-	/* Restore old handler */
-	_dos_setvect(DOS_INT, old_dos_handler);
+	if (tracetsr) {
+		printf("Tracing process with psp %d (0x%04x)\n", tsrpsp, tsrpsp);
+		puts("Press any key to exit.");
+		execed = 1;
+		(void)_bios_keybrd(_KEYBRD_READ);
+	} else if (optind != argc) {
+		status=spawnvp(P_WAIT, argv[optind], argv + optind);
+	} else {
+		puts("Tracing system activity.\nPress any key to exit.");
+		execed = 1;
+		(void)_bios_keybrd(_KEYBRD_READ);
+	}
+	execed = 0;
+	restore_handler(SIGTERM);
+	if (count)
+		for (c = 0; c < 256; c++)
+			if (funcs[c].count)
+				tprintf("%02X %20s %10u\n", c, funcs[c].name ? funcs[c].name : "???", funcs[c].count);
 
 	close(fd);
 	if (status == -1) {
