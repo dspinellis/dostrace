@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.18 1991/06/02 20:02:33 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.19 1991/08/03 12:58:56 dds Exp $
  *
  */
 
@@ -22,31 +22,40 @@
 #include <bios.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.18 1991/06/02 20:02:33 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.19 1991/08/03 12:58:56 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
 
-static int stringprint, hexprint, otherprint, nameprint, regdump, tracechildren, timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint, branchprint;
+/*
+ * Program options.  See main() for explanation.
+ */
+static stringprint, hexprint, otherprint, nameprint, regdump, tracechildren;
+static timeprint, count, tracetsr, tsrpsp, numprint, worderror, pspprint;
+static branchprint;
 static unsigned datalen = 15;
 static someprefix;
 
-static mypsp, tracedpsp;
-static execed;
-static char _far *critsectflag;
-static char _far *criterrflag;
+static mypsp, tracedpsp;		/* PSP of us and traced program */
+static execed;				/* True after we run */
+static char _far *critsectflag;		/* DOS critical section flag */
+static char _far *criterrflag;		/* DOS citical error flag */
 
-/* Video interrupt */
+/* DOS interrupt */
 #define DOS_INT	0x21
 
 /* Old dos handler to chain to */
 static void (_interrupt _far _cdecl *old_dos_handler)( void );
 
+/* Output file descriptor */
 static int fd;
 
 #pragma check_stack(off)
 #pragma intrinsic(strlen)
 
+/*
+ * Output a string to the trace file
+ */
 static void
 tputs(char *s)
 {
@@ -71,6 +80,9 @@ tputs(char *s)
 
 int _doprnt(char *fmt, va_list marker, FILE *f);
 
+/*
+ * Print a formated string to the trace file
+ */
 int
 tprintf(char *fmt, ...)
 {
@@ -91,6 +103,9 @@ tprintf(char *fmt, ...)
 	return result;
 }
 
+/*
+ * Convert a high low pair into a long
+ */
 static long
 makelong(unsigned high, unsigned low)
 {
@@ -108,6 +123,9 @@ makelong(unsigned high, unsigned low)
 }
 
 
+/*
+ * Convert a segment offset pair into a far pointer.
+ */
 static void _far *
 makefptr(unsigned seg, unsigned off)
 {
@@ -190,6 +208,9 @@ devinfo(unsigned n)
 	tputs("\r\n");
 }
 
+/*
+ * Convert a boolean variable to on / off.
+ */
 static char *
 makeonoff(int n)
 {
@@ -204,6 +225,9 @@ makeonoff(int n)
 }
 
 
+/*
+ * Print the string contained in the buffer specified of len bytes.
+ */
 static void
 outbuff(unsigned sseg, unsigned soff, unsigned len)
 {
@@ -237,18 +261,13 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 		*s++ = '"';
 		for (i = 0; i < l; i++)
 			switch (p[i]) {
-			case '\n':
-				*s++ = '\\';
-				*s++ = 'n';
-				break;
-			case '\t':
-				*s++ = '\\';
-				*s++ = 't';
-				break;
-			case '\r':
-				*s++ = '\\';
-				*s++ = 'r';
-				break;
+			case '\n': *s++ = '\\'; *s++ = 'n'; break;
+			case '\t': *s++ = '\\'; *s++ = 't'; break;
+			case '\b': *s++ = '\\'; *s++ = 'b'; break;
+			case '\r': *s++ = '\\'; *s++ = 'r'; break;
+			case '\f': *s++ = '\\'; *s++ = 'f'; break;
+			case '\v': *s++ = '\\'; *s++ = 'v'; break;
+			case '\a': *s++ = '\\'; *s++ = 'a'; break;
 			default:
 				if (iscntrl(p[i])) {
 					*s++ = '\\'; *s++ = 'x';
@@ -265,6 +284,9 @@ outbuff(unsigned sseg, unsigned soff, unsigned len)
 }
 
 	
+/*
+ * Return executing programs PSP
+ */
 static unsigned
 getpsp(void)
 {
@@ -274,6 +296,9 @@ getpsp(void)
 }
 #pragma message("Expect warning for no returned value")
 
+/*
+ * Set executing programs PSP
+ */
 static void
 setpsp(unsigned psp)
 {
@@ -282,6 +307,9 @@ setpsp(unsigned psp)
 	_asm int 21h
 }
 
+/*
+ * Return the DOS critical section flag pointer.
+ */
 static char _far *
 getcritsectflag(void)
 {
@@ -295,6 +323,9 @@ getcritsectflag(void)
 	return makefptr(sseg, soff);
 }
 
+/*
+ * Return the DOS Data Transfer Address (DTA)
+ */
 static void _far *
 getdta(void)
 {
@@ -308,6 +339,9 @@ getdta(void)
 	return makefptr(sseg, soff);
 }
 
+/*
+ * Convert a file mode number into a Unix ls -l like string.
+ */
 static char *
 strmode(unsigned mode)
 {
@@ -439,6 +473,9 @@ nerrorproc(unsigned flags, unsigned ax)
 		tprintf("%u\r\n", ax);
 }
 
+/*
+ * Print time of day.
+ */
 static void
 print_time(void)
 {
@@ -461,7 +498,7 @@ struct s_func {
 	{"serial_in", 0},		/* 03H	DOS1 - SERIAL INPUT */
 	{"serial_out", 0},		/* 04H	DOS1 - SERIAL OUTPUT */
 	{"printer_out", 0},		/* 05H	DOS1 - PRINTER OUTPUT */
-	{"console_io", 0},		/* 06H	DOS1 - DIRECT CONSOLE I/O */
+	{"direct_out", 0},		/* 06H	DOS1 - DIRECT CONSOLE OUT */
 	{"dir_key_in", 0},		/* 07H	DOS1 - DIRECT KEYBOARD INPUT */
 	{"key_in", 0},			/* 08H	DOS1 - KEYBOARD INPUT WITHOUT ECHO */
 	{"disp_string", 0},		/* 09H	DOS1 - DISPLAY STRING */
@@ -557,6 +594,9 @@ struct s_func {
 };
 
 
+/*
+ * Print any prefixes specified by the user before the actual function call.
+ */
 static void
 prefixfun(int fun, unsigned cs, unsigned ip)
 {
@@ -572,7 +612,9 @@ prefixfun(int fun, unsigned cs, unsigned ip)
 
 #define prefix() do { if (someprefix) prefixfun(fun, _cs, _ip); } while (0)
 
-/* The dos interrupt handler */
+/* 
+ * The new DOS interrupt handler 
+ */
 static void _cdecl _interrupt _far
 dos_handler(
 	unsigned _es,
@@ -617,6 +659,10 @@ dos_handler(
 	case 0x02:				/* disp_out */
 		prefix();
 		tprintf("display_char('%c')\r\n", _dx & 0xff);
+		goto norm_proc;
+	case 0x06:				/* direct_out */
+		prefix();
+		tprintf("direct_out('%c')\r\n", _dx & 0xff);
 		goto norm_proc;
 	case 0x09:				/* disp_string */
 		prefix();
@@ -1386,6 +1432,7 @@ dos_handler(
 			mov _flags, ax
 			popf
 		}
+		tracedpsp = _bx;
 		break;
 	case 0x51:				/* get_psp */
 	case 0x62:				/* get_psp */
@@ -1406,6 +1453,33 @@ dos_handler(
 		}
 		setpsp(mypsp);
 		tprintf("get_psp() = %04X\r\n", _bx);
+		break;
+	case 0x55:				/* Create child PSP */
+		prefix();
+		tprintf("child_psp(%04X, %04X) = ", _dx, _si);
+		setpsp(tracedpsp);
+		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
+			mov ax, _ax
+			mov dx, _dx
+			mov si, _si
+			int 21h
+			mov _ax, ax
+			pushf
+			pop ax
+			mov _flags, ax
+			popf
+		}
+		setpsp(mypsp);
+		if (_flags & 1)
+			errprintln(_ax);
+		else {
+			tputs("ok\r\n");
+			tracedpsp = _dx;
+		}
 		break;
 	case 0x5a:				/* Tmpfile */
 		prefix();
@@ -1454,6 +1528,10 @@ dos_handler(
 	trace = 1;
 }
 
+/*
+ * Restore the prevuious handler.
+ * Called by signal handlers.
+ */
 void
 restore_handler(int sig)
 {
@@ -1463,6 +1541,9 @@ restore_handler(int sig)
 
 int getopt(int, char **, char *);
 
+/*
+ * Main program starts here.
+ */
 int
 main(int argc, char *argv[])
 {
@@ -1473,7 +1554,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwx] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.18 $", revision[30];
+	static char revstring[] = "$Revision: 1.19 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
@@ -1489,17 +1570,22 @@ main(int argc, char *argv[])
 		argv[0] = "trace";
 	while ((c = getopt(argc, argv, "abfo:h:sxl:nitrevcp:w")) != EOF)
 		switch (c) {
-		case 'i':			/* Print psp */
+		case 'i':			/* Print PSP */
 			pspprint = 1;
 			break;
-		case 'p':
-			tsrpsp = atoi(optarg);
-			tracetsr = 1;
+		case 'p':			/* Trace with given PSP */
+			if (optarg) {
+				tsrpsp = atoi(optarg);
+				tracetsr = 1;
+			} else {
+				fprintf(stderr, "%s: -p needs a PSP parameter\n", argv[0]);
+				errflag = 1;
+			}
 			break;
-		case 'e':
+		case 'e':			/* Trace children */
 			tracechildren = 1;
 			break;
-		case 'v':
+		case 'v':			/* Verbose */
 			branchprint = pspprint = worderror = numprint = timeprint = tracechildren = regdump = stringprint = hexprint = otherprint = nameprint = 1;
 			break;
 		case 'f':			/* Print function number */
@@ -1515,7 +1601,12 @@ main(int argc, char *argv[])
 			regdump = 1;
 			break;
 		case 'o':			/* Output file */
-			fname = optarg ;
+			if (optarg)
+				fname = optarg ;
+			else {
+				fprintf(stderr, "%s: -o needs a file parameter\n", argv[0]);
+				errflag = 1;
+			}
 			break ;
 		case 'w':			/* Print errors as words */
 			worderror = 1;
@@ -1536,32 +1627,37 @@ main(int argc, char *argv[])
 			nameprint = 1;
 			break;
 		case 'l':			/* Specify length */
-			datalen = atoi(optarg);
-			if (datalen >= MAXBUFF) {
-				fprintf(stderr, "%s: Data length %u is greater than maximum length %u.  %u used.\n", argv[0], datalen, MAXBUFF - 1, MAXBUFF - 1);
-				datalen = MAXBUFF - 1;
+			if (optarg) {
+				datalen = atoi(optarg);
+				if (datalen >= MAXBUFF) {
+					fprintf(stderr, "%s: Data length %u is greater than maximum length %u.  %u used.\n", argv[0], datalen, MAXBUFF - 1, MAXBUFF - 1);
+					datalen = MAXBUFF - 1;
+				}
+			} else {
+				fprintf(stderr, "%s: -l needs a length parameter\n", argv[0]);
+				errflag = 1;
 			}
 			break;
 		case 'h':			/* Help */
-			fprintf(stderr, "Trace Version %s (C) Copyright 1991 D. Spinellis.  All rights reserved.\n", revision);
-			fprintf(stderr, usagestring, argv[0]);
-			fputs("-a\tTrace all DOS functions\n", stderr);
-			fputs("-b\tPrint interrupt branch address\n", stderr);
-			fputs("-c\tProduce a count summary only\n", stderr);
-			fputs("-e\tTrace across exec calls\n", stderr);
-			fputs("-f\tPrefix calls with function number\n", stderr);
-			fputs("-h\tPrint this list\n", stderr);
-			fputs("-i\tPrefix calls with process id (psp address)\n", stderr);
-			fputs("-l L\tSpecify I/O printed data length\n", stderr);
-			fputs("-n\tPrint other functions by name\n", stderr);
-			fputs("-o F\tSpecify output file name\n", stderr);
-			fputs("-p P\tTrace resident process with PSP P\n", stderr);
-			fputs("-r\tDump registers on other functions\n", stderr);
-			fputs("-s\tPrint I/O strings\n", stderr);
-			fputs("-t\tPrefix calls with time\n", stderr);
-			fputs("-v\tVerbose (-aefinrstwx)\n", stderr);
-			fputs("-w\tPrint errors as words\n", stderr);
-			fputs("-x\tPrint I/O binary data (needs -s)\n", stderr);
+			fprintf(stdout, "Trace Version %s (C) Copyright 1991 D. Spinellis.  All rights reserved.\n", revision);
+			fprintf(stdout, usagestring, argv[0]);
+			fputs("-a\tTrace all DOS functions\n", stdout);
+			fputs("-b\tPrint interrupt branch address\n", stdout);
+			fputs("-c\tProduce a count summary only\n", stdout);
+			fputs("-e\tTrace across exec calls\n", stdout);
+			fputs("-f\tPrefix calls with function number\n", stdout);
+			fputs("-h\tPrint this list\n", stdout);
+			fputs("-i\tPrefix calls with process id (psp address)\n", stdout);
+			fputs("-l L\tSpecify I/O printed data length\n", stdout);
+			fputs("-n\tPrint other functions by name\n", stdout);
+			fputs("-o F\tSpecify output file name\n", stdout);
+			fputs("-p P\tTrace resident process with PSP P\n", stdout);
+			fputs("-r\tDump registers on other functions\n", stdout);
+			fputs("-s\tPrint I/O strings\n", stdout);
+			fputs("-t\tPrefix calls with time\n", stdout);
+			fputs("-v\tVerbose (-abefinrstwx)\n", stdout);
+			fputs("-w\tPrint errors as words\n", stdout);
+			fputs("-x\tPrint I/O binary data (needs -s)\n", stdout);
 			return 0;
 		case '?':			/* Error */
 			errflag = 1;
