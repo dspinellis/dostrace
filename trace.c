@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991 Diomidis Spinellis.  All rights reserved.
  *
- * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.4 1991/01/16 00:58:20 dds Exp $
+ * $Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.5 1991/01/19 18:40:39 dds Exp $
  *
  */
 
@@ -19,13 +19,15 @@
 #include <ctype.h>
 
 #ifndef lint
-static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.4 1991/01/16 00:58:20 dds Exp $";
+static char rcsid[] = "$Header: /dds/src/sysutil/trace/RCS/trace.c,v 1.5 1991/01/19 18:40:39 dds Exp $";
 #endif
 
 static int stringprint, hexprint, otherprint, nameprint, regdump;
 static unsigned datalen = 15;
 
 static mypsp;
+static char _far *critsectflag;
+static char _far *criterrflag;
 
 /* Video interrupt */
 #define DOS_INT	0x21
@@ -228,6 +230,19 @@ setpsp(unsigned psp)
 	_asm int 21h
 }
 
+static char _far *
+getcritsectflag(void)
+{
+	unsigned sseg, soff;
+
+	_asm mov ah, 34h
+	_asm int 21h
+	_asm mov ax, es
+	_asm mov sseg, ax
+	_asm mov soff, bx
+	return makefptr(sseg, soff);
+}
+
 #pragma check_stack()
 
 char *funcs[] =
@@ -354,7 +369,7 @@ dos_handler(
 	int psp;
 	int fun;
 
-	if (recurse)
+	if (recurse || *critsectflag || *criterrflag)
 		_chain_intr(old_dos_handler);
 	recurse = 1;
 	psp = getpsp();
@@ -368,10 +383,14 @@ dos_handler(
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
+			pushf
 			push ds
 			mov dx, _dx
 			mov ax, _ds
 			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
 			mov ax, _ax
 			mov cx, _cx
 			int 21h
@@ -380,6 +399,7 @@ dos_handler(
 			pop ax
 			mov _flags, ax
 			pop ds
+			popf
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
@@ -395,10 +415,14 @@ dos_handler(
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
+			pushf
 			push ds
 			mov dx, _dx
 			mov ax, _ds
 			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
 			mov ax, _ax
 			int 21h
 			mov _ax, ax
@@ -406,6 +430,7 @@ dos_handler(
 			pop ax
 			mov _flags, ax
 			pop ds
+			popf
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
@@ -419,6 +444,10 @@ dos_handler(
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
 			mov ax, _ax
 			mov bx, _bx
 			int 21h
@@ -426,6 +455,7 @@ dos_handler(
 			pushf
 			pop ax
 			mov _flags, ax
+			popf
 		}
 		setpsp(mypsp);
 		if (_flags & 1) {
@@ -451,9 +481,13 @@ dos_handler(
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
+			pushf
 			push ds
 			mov ax, _ds
 			mov ds, ax
+			mov ax, _flags
+			push ax
+			popf
 			mov ax, _ax
 			mov bx, _bx
 			mov cx, _cx
@@ -464,6 +498,7 @@ dos_handler(
 			pop ax
 			mov _flags, ax
 			pop ds
+			popf
 		}
 		setpsp(mypsp);
 		if (_flags & 1)
@@ -484,6 +519,10 @@ dos_handler(
 		outstring(") = ");
 		setpsp(psp);
 		_asm {
+			pushf
+			mov ax, _flags
+			push ax
+			popf
 			mov ax, _ax
 			mov bx, _bx
 			mov cx, _cx
@@ -494,6 +533,7 @@ dos_handler(
 			pushf
 			pop ax
 			mov _flags, ax
+			popf
 		}
 		setpsp(mypsp);
 		if (_flags & 1) {
@@ -529,7 +569,7 @@ dos_handler(
 				outstring(" es=");
 				outhex(_es);
 			}
-			outstring("\n");
+			outstring("\r\n");
 		}
 		setpsp(psp);
 		recurse = 0;
@@ -601,6 +641,11 @@ main(int argc, char *argv[])
 	}
 
 	mypsp = getpsp();
+	critsectflag = getcritsectflag();
+	if (_osmajor == 2)
+		criterrflag = critsectflag + 1;
+	else
+		criterrflag = critsectflag - 1;
 	/* Save old handler and install new one */
 	old_dos_handler = _dos_getvect(DOS_INT);
 	_dos_setvect(DOS_INT, dos_handler);
