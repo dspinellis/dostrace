@@ -3,7 +3,7 @@
  *
  * (C) Copyright 1991-1993 Diomidis Spinellis.  All rights reserved.
  *
- * $Id: trace.c,v 1.25 1993/02/03 13:19:45 dds Exp $
+ * $Id: trace.c,v 1.26 1993/02/03 15:49:46 dds Exp $
  *
  */
 
@@ -23,7 +23,7 @@
 #include <errno.h>
 
 #ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.25 1993/02/03 13:19:45 dds Exp $";
+static char rcsid[] = "$Id: trace.c,v 1.26 1993/02/03 15:49:46 dds Exp $";
 #endif
 
 #define MAXBUFF 1025
@@ -472,6 +472,36 @@ nerrorproc(unsigned flags, unsigned ax)
 }
 
 /*
+ * Print memory allocation strategy
+ */
+static void
+print_memory_strategy(unsigned str)
+{
+	if (str & 0x40)
+		tputs("high memory ");
+	else if (str & 0x80)
+		tputs("high then low memory ");
+	else 
+		tputs("low memory ");
+	switch (str & 7) {
+	case 0: tputs("first fit"); break;
+	case 1: tputs("best fit"); break;
+	case 2: tputs("last fit"); break;
+	}
+}
+
+/*
+ * Print date and time as packed in DOS format
+ */
+static void
+print_dtim(int date, int time)
+{
+	tprintf("%2u/%2u/%2u %2u:%02u.%-2u",
+		(date >> 9) + 80, (date >> 5) & 0xf, date & 0x1f,
+		time >> 11, (time >> 5) & 0x3f, time & 0x1f);
+}
+
+/*
  * Print time of day.
  */
 static void
@@ -503,7 +533,7 @@ struct s_func {
 	{"buf_key_in", 0},		/* 0AH	DOS1 - BUFFERED KEYBOARD INPUT */
 	{"chk_key_stat", 0},		/* 0BH	DOS1 - CHECK KEYBOARD STATUS */
 	{"clr_key_func", 0},		/* 0CH	DOS1 - CLEAR KEY BUFFER AND PERFORM FUNCTION */
-	{"reset_disk", 0},		/* 0DH	DOS1 - RESET DISK */
+	{"flush", 0},			/* 0DH	DOS1 - DISK RESET */
 	{"sel_drive", 0},		/* 0EH	DOS1 - SELECT CURRENT DRIVE */
 	{"open_file", 0},		/* 0FH	DOS1 - OPEN FILE */
 	{"close_file", 0},		/* 10H	DOS1 - CLOSE FILE */
@@ -518,7 +548,7 @@ struct s_func {
 	{"rd_cur_drive", 0},		/* 19H	DOS1 - REPORT CURRENT DRIVE */
 	{"set_dta", 0},			/* 1AH	DOS1 - SET DISK TRANSFER AREA FUCNTION */
 	{"rd_fat_1", 0},		/* 1BH	DOS1 - READ CURRENT DRIVE'S FAT */
-	{"rd_fat_2", 0},		/* 1CH	DOS1 - READ ANY DRIVE'S FAT */
+	{"drive_info", 0},		/* 1CH	DOS1 - READ ANY DRIVE'S FAT */
 	{"reserved 0x1d", 0},		/* 1dh */
 	{"reserved 0x1e", 0},		/* 1eh */
 	{"reserved 0x1f", 0},		/* 1fh */
@@ -572,7 +602,7 @@ struct s_func {
 	{"find_next", 0},		/* 4FH	DOS2 - FIND NEXT FILE MATCH */
 	{"set_psp", 0},			/* 50h */
 	{"get_psp", 0},			/* 51h */
-	{"get_handle_addr", 0},		/* 52h */
+	{"sysvars", 0},			/* 52h GET LIST OF LISTS */
 	{"reserved 0x53", 0},		/* 53h */
 	{"get_verify", 0},		/* 54H	DOS2 - GET FILE WRITE VERIFY STATE */
 	{"reserved 0x55", 0},		/* 55h */
@@ -652,14 +682,6 @@ dos_handler(
 		_chain_intr(old_dos_handler);
 	}
 	setpsp(mypsp);
-	if (append) {
-		close(fd);
-		if ((fd = open(fname, O_TEXT | O_APPEND | O_WRONLY, 0666)) == -1) {
-			fd = 1;
-			tprintf("ERROR %s \r\n", sys_errlist[errno]);
-		}
-		lseek(fd, 0l, SEEK_END);
-	}
 	if (someprefix)
 		prefix(fun, _cs, _ip);
 	switch (fun) {
@@ -675,6 +697,9 @@ dos_handler(
 		else
 			tprintf("display(%04X:%04X)\r\n", _ds, _dx);
 		break;
+	case 0x0d:
+		tputs("flush()\r\n");
+		break;
 	case 0x0e:				/* set_current_disk */
 		tprintf("set_current_disk(%c:) = ", (_dx & 0xff) + 'A');
 		break;
@@ -683,19 +708,23 @@ dos_handler(
 	case 0x1a:				/* set_dta */
 		tprintf("set_dta(%04X:%04X)\r\n", _ds, _dx);
 		break;
+	case 0x1c:				/* drive information */
+		tprintf("drive_info(%d) = ", _dx & 0xff);
+		break;
 	case 0x25:				/* set_vector */
 		tprintf("set_vector(%#x, %04X:%04X)\r\n", _ax & 0xff, _ds, _dx);
 		break;
-	case 0x2a:				/* get_date */
+	case 0x29:				/* parse_name */
+		tprintf("parse_name(%04X:%04X, %d, %04X:%04X) = ",
+			_ds, _si, _ax & 0xff, _es, _di);
 		break;
+	case 0x2a:				/* get_date */
 	case 0x2c:				/* get_time */
 		break;
 	case 0x2d:				/* set_time */
 		tprintf("set_time(%02d:%02d:%02d.%d) = ", _cx >> 8, _cx & 0xff, _dx >> 8, _dx & 0xff);
 		break;
 	case 0x2f:				/* get_dta */
-		tprintf("get_dta() = %04X:%04X\r\n", _es, _bx);
-		break;
 	case 0x30:				/* get_version */
 		break;
 	case 0x33:				/* cntrl_brk */
@@ -705,9 +734,14 @@ dos_handler(
 		case 1:
 			tprintf("set_break(%s)\r\n", makeonoff(_dx & 0xff));
 			break;
-		default:
+		case 2:
+			tprintf("getset_break(%s) = ", makeonoff(_dx & 0xff));
 			break;
+		default:
+			goto aka_default;
 		}
+		break;
+	case 0x34:				/* critical_flag */
 		break;
 	case 0x35:				/* get_vector */
 		tprintf("get_vector(%#x) = ", _ax & 0xff);
@@ -751,7 +785,7 @@ dos_handler(
 			tputs("chmod(\"");
 			break;
 		default:
-			goto aka_default_1;
+			goto aka_default;
 		}
 		tprintf("%Fs", makefptr(_ds, _dx));
 		if (_ax & 0xff == 1)
@@ -761,9 +795,31 @@ dos_handler(
 	case 0x44:				/* ioctl */
 		switch (funl = (_ax & 0xff)) {
 		default:
-			goto aka_default_1;
+			goto aka_default;
 		case 0x00:			/* get device info */
 			tprintf("ioctl(GET_DEV_INFO, %d) = ", _bx);
+			break;
+		case 0x02:			/* read from chdev control */
+			tprintf("ioctl(READ_CHDEV_CCHAN, %d, %u, %04X:%04X) = ",
+				_bx, _cx, _ds, _dx);
+			break;
+		case 0x07:			/* get output status */
+			tprintf("ioctl(GET_OUTPUT_STATUS, %d) = ", _bx);
+			break;
+		case 0x08:			/* check if removable */
+			tprintf("ioctl(BD_ISREMOVABLE, %d) = ", _bx & 0xff);
+			break;
+		case 0x09:			/* check if remote */
+			tprintf("ioctl(BD_ISREMOTE, %d) = ", _bx & 0xff);
+			break;
+		case 0x0a:			/* check if remote */
+			tprintf("ioctl(HAN_ISREMOTE, %d) = ", _bx);
+			break;
+		case 0x0e:			/* get logical map */
+			tprintf("ioctl(GET_LMAP, %d) = ", _bx & 0xff);
+			break;
+		case 0x0f:			/* set logical map */
+			tprintf("ioctl(SET_LMAP, %d) = ", _bx & 0xff);
 			break;
 		}
 		break;
@@ -805,6 +861,8 @@ dos_handler(
 			_chain_intr(old_dos_handler);
 		}
 		break;
+	case 0x4d:				/* Get return code */
+		break;
 	case 0x4e:				/* Findfirst */
 		tprintf("findfirst(\"%Fs\", %#x%s) = ", makefptr(_ds, _dx), _cx, strmode(_cx));
 		break;
@@ -815,15 +873,62 @@ dos_handler(
 		tprintf("set_psp(%04X)\r\n", _bx);
 		break;
 	case 0x51:				/* get_psp */
+		break;
+	case 0x52:				/* sysvars */
+		tputs("sysvars() = ");
+		break;
+	case 0x57:				/* get/set date time */
+		switch (funl = (_ax & 0xff)) {
+		case 0:				/* get time */
+			tprintf("get_time(%d) = ", _bx);
+			break;
+		case 1:				/* set time */
+			tprintf("set_time(%d, ");
+			print_dtim(_dx, _cx);
+			tputs(") = ");
+			break;
+		default:
+			goto aka_default;
+		}
+		break;
+	case 0x58:				/* memory allocation */
+		switch (funl = (_ax & 0xff)) {
+		case 0:				/* get strategy */
+			tputs("get_alloc_str() = ");
+			break;
+		case 1:				/* set strategy */
+			tputs("set_alloc_str(");
+			print_memory_strategy(_bx & 0xff);
+			tputs(") = ");
+			break;
+		case 2:				/* get umb state */
+			tputs("get_umb_state() = ");
+			break;
+		case 3:				/* set umb state */
+			tprintf("set_umb_state(%d) = ", _bx);
+			break;
+		default:
+			goto aka_default;
+		}
+		break;
+	case 0x5b:				/* Creat new */
+		tprintf("creat_new(\"%Fs\", %02x%s) = ", makefptr(_ds, _dx),
+			 _cx, strmode(_cx));
+		break;
 	case 0x62:				/* get_psp */
 		break;
 	case 0x55:				/* Create child PSP */
 		tprintf("child_psp(%04X, %04X) = ", _dx, _si);
 		break;
 	case 0x5a:				/* Tmpfile */
-		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx), _cx & 0xff);
+		tprintf("tmpfile(\"%Fs\", %#x) = ", makefptr(_ds, _dx),
+			_cx & 0xff);
 		break;
-	aka_default_1:
+	case 0x6c:				/* Open */
+		tprintf("open4(\"%Fs\", %d, %s, %d) = ", makefptr(_ds, _si), _bx, strmode(_cx), _dx);
+		break;
+
+	aka_default:			/* All unknown functions arrive here */
 	default:
 		if (otherprint) {
 			if (nameprint && fun <= 0x62)
@@ -839,6 +944,24 @@ dos_handler(
 		trace = 1;
 		_chain_intr(old_dos_handler);
 	}
+	/*
+	 * This is the best place to flush the file.
+	 * We have printed the function and its parameters, so if the
+	 * systems crashes the information will be saved.
+	 */
+	if (append) {
+		close(fd);
+		if ((fd = open(fname, O_TEXT | O_APPEND | O_WRONLY, 0666)) == -1) {
+			fd = 1;
+			tprintf("ERROR %s \r\n", sys_errlist[errno]);
+		}
+		lseek(fd, 0l, SEEK_END);
+	}
+	/*
+	 * Call the DOS interrupt.  Transfer all function variables to the
+	 * machine registers, call DOS and transfer the machine registers
+	 * back to the function variables.
+	 */
 	setpsp(tracedpsp);
 	_asm {
 		pushf
@@ -876,10 +999,9 @@ dos_handler(
 	setpsp(mypsp);
 	switch (fun) {
 	case 0x02:				/* disp_out */
-		break;
 	case 0x06:				/* direct_out */
-		break;
 	case 0x09:				/* disp_string */
+	case 0x0d:				/* flush */
 		break;
 	case 0x0e:				/* set_current_disk */
 		tprintf("%d\r\n", _ax & 0xff);
@@ -889,7 +1011,22 @@ dos_handler(
 		break;
 	case 0x1a:				/* set_dta */
 		break;
+	case 0x1c:				/* drive information */
+		tprintf("s/c=%u b/s=%u nc=%u ty=", _ax & 0xff, _cx, _dx);
+		switch (*(unsigned char *)makefptr(_ds, _bx)) {
+		case 0xff: tputs("320K\r\n"); break;
+		case 0xfe: tputs("160K\r\n"); break;
+		case 0xfd: tputs("360K\r\n"); break;
+		case 0xfc: tputs("180K\r\n"); break;
+		case 0xf9: tputs("1.2M\r\n"); break;
+		case 0xf8: tputs("HD\r\n"); break;
+		default: tputs("other\r\n"); break;
+		}
+		break;
 	case 0x25:				/* set_vector */
+		break;
+	case 0x29:				/* parse_name */
+		tprintf("%d (%04X:%04X)\r\n", _ax & 0xff, _ds, _si);
 		break;
 	case 0x2a:				/* get_date */
 		tprintf("get_date() = %2u/%2u/%2u (%s)\r\n", _cx, _dx >> 8,  _dx & 0xff, weekday(_ax & 0xff));
@@ -916,23 +1053,23 @@ dos_handler(
 			break;
 		case 1:
 			break;
+		case 2:
+			tprintf("%s\r\n", makeonoff(_dx & 0xff));
+			break;
 		}
+		break;
+	case 0x34:				/* critical_flag */
+		tprintf("critical_flag() = %04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x35:				/* get_vector */
 		tprintf("%04X:%04X\r\n", _es, _bx);
 		break;
 	case 0x39:				/* Mkdir */
-		okerrorproc(_flags, _ax);
-		break;
 	case 0x3a:				/* Rmdir */
-		okerrorproc(_flags, _ax);
-		break;
 	case 0x3b:				/* Chdir */
 		okerrorproc(_flags, _ax);
 		break;
 	case 0x3c:				/* Creat */
-		nerrorproc(_flags, _ax);
-		break;
 	case 0x3d:				/* Open */
 		nerrorproc(_flags, _ax);
 		break;
@@ -981,6 +1118,56 @@ dos_handler(
 					tprintf("%04X\r\n", _dx);
 			}
 			break;
+		case 0x02:			/* read from chdev control */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				tprintf("%u", _ax);
+			if (stringprint)
+				outbuff(_ds, _dx, _ax);
+			tputs("\r\n");
+			break;
+		case 0x07:			/* get output status */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				tputs((_ax & 0xff) ? "NOT_READY" : "READY");
+			tputs("\r\n");
+			break;
+		case 0x08:			/* check if removable */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				tputs(_ax ? "FIXED" : "REMOVABLE");
+			tputs("\r\n");
+			break;
+		case 0x09:			/* check if remote */
+			if (_flags & 1)
+				errprint(_ax);
+			else {
+				tputs((_dx & 0x8000) ? "SUBST " : "NO_SUBST ");
+				tputs((_dx & 0x1000) ? "REMOTE " : "LOCAL ");
+				tputs((_dx & 0x0200) ? "NOIO" : "IO");
+			}
+			tputs("\r\n");
+			break;
+		case 0x0a:			/* check if remote */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				tputs((_dx & 0x8000) ? "REMOTE" : "LOCAL");
+			tputs("\r\n");
+			break;
+		case 0x0e:			/* get logical map */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				tprintf("%d", _ax & 0xff);
+			tputs("\r\n");
+			break;
+		case 0x0f:			/* set logical map */
+			okerrorproc(_flags, _ax);
+			break;
 		}
 		break;
 	case 0x45:				/* Dup */
@@ -1022,6 +1209,9 @@ dos_handler(
 	case 0x4c:				/* Exit */
 		/* NOTREACHED */
 		break;
+	case 0x4d:				/* Get return code */
+		tprintf("get_code() = %d %d\r\n", _ax >> 8, _ax & 0xff);
+		break;
 	case 0x4e:				/* Findfirst */
 		if (_flags & 1)
 			errprintln(_ax);
@@ -1045,6 +1235,9 @@ dos_handler(
 	case 0x50:				/* set_psp */
 		tracedpsp = _bx;
 		break;
+	case 0x52:				/* sysvars */
+		tprintf("%04X:%04X\r\n", _es, _bx);
+		break;
 	case 0x51:				/* get_psp */
 	case 0x62:				/* get_psp */
 		tprintf("get_psp() = %04X\r\n", _bx);
@@ -1057,9 +1250,59 @@ dos_handler(
 			tracedpsp = _dx;
 		}
 		break;
+	case 0x57:				/* get/set date time */
+		switch (funl = (_ax & 0xff)) {
+		case 0:				/* get time */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				print_dtim(_dx, _cx);
+			tputs("\r\n");
+			break;
+		case 1:				/* set time */
+			okerrorproc(_flags, _ax);
+			break;
+		}
+		break;
+	case 0x58:				/* memory allocation */
+		switch (funl) {
+		case 0:				/* get strategy */
+			if (_flags & 1)
+				errprint(_ax);
+			else
+				print_memory_strategy(_ax);
+			tputs("\r\n");
+			break;
+		case 1:				/* set strategy */
+			okerrorproc(_flags, _ax);
+			break;
+		case 2:				/* get umb state */
+			nerrorproc(_flags, _ax & 0xff);
+			break;
+		case 3:				/* set umb state */
+			okerrorproc(_flags, _ax);
+			break;
+		}
+		break;
 	case 0x5a:				/* Tmpfile */
 		nerrorproc(_flags, _ax);
 		break;
+	case 0x5b:				/* Creat new */
+		nerrorproc(_flags, _ax);
+		break;
+	case 0x6c:				/* Open 4 */
+		if (_flags & 1)
+			errprint(_ax);
+		else {
+			tprintf("%u ", _ax);
+			if (stringprint)
+				switch (_cx) {
+				case 0: tputs("(OPEN)"); break;
+				case 1: tputs("(CREAT)"); break;
+				case 2: tputs("(TRUNC)"); break;
+				}
+		}
+		tputs("\r\n");
 	}
 	setpsp(tracedpsp);
 	trace = 1;
@@ -1090,7 +1333,7 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.25 $", revision[30];
+	static char revstring[] = "$Revision: 1.26 $", revision[30];
 	char *p;
 
 	strcpy(revision, strchr(revstring, ':') + 2);
