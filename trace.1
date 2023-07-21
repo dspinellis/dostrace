@@ -1,0 +1,193 @@
+.TH TRACE 1 "1 October 1994"
+.\" (C) Copyright 1991, 1994 Diomidis Spinellis.  All rights reserved.
+.\" 
+.\" Permission to use, copy, and distribute this software and its
+.\" documentation for any purpose and without fee is hereby granted,
+.\" provided that the above copyright notice appear in all copies and that
+.\" both that copyright notice and this permission notice appear in
+.\" supporting documentation.
+.\" 
+.\" THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+.\" WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+.\" MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+.\"
+.SH NAME
+trace \- trace system calls made by a process
+.SH SYNOPSIS
+\fBtrace\fP 
+[\fB\-help\fP] 
+[\fB\-o\fP \fIfname\fP]
+[\fB\-l\fP \fIlen\fP] 
+[\fB\-p\fP \fIpsp\fP] 
+[\fB\-abcefinrstvwxy\fP] 
+[ \fIcommand options\fP\| .\|.\|. ]
+.SH DESCRIPTION
+\fITrace\fP is a system utility that produces a listing of the MS-DOS requests
+made by a process.  It is a useful debugging tool that can be used on any
+executable program.  \fITrace\fP can also be used to provide a better
+understanding of the internal workings of many programs.  A utility
+with the same name and similar functionality is provided with SunOS.
+.LP
+Trace can monitor either a command passed as an argument, all the
+resident processes in the system or a process with a given program
+segment prefix (PSP).  In all cases it creates a file (\fItrace.log\fP
+by default) where each system call and its arguments made by
+the process(es) monitored are printed.  A number of options control
+the detail of information printed.
+.SH OPTIONS
+.IP \fB\-a\fP
+Monitor all system calls.  By default the following functions are traced:
+\fIdisp_out\fP (0x02),
+\fIdirect_out\fP (0x06),
+\fIdisp_string\fP (0x09),
+\fIflush\fP (0x0d),
+\fIset_current_disk\fP (0x0e),
+\fIget_current_disk\fP (0x19),
+\fIset_dta\fP (0x1a),
+\fIdrive_info\fP (0x1c),
+\fIset_vector\fP (0x25),
+\fIparse_name\fP (0x29),
+\fIget_date\fP (0x2a),
+\fIget_time\fP (0x2c),
+\fIset_time\fP (0x2d),
+\fIget_dta\fP (0x2f),
+\fIget_version\fP (0x30),
+\fIcntrl_brk\fP (0x33),
+\fIget_flag\fP (0x34),
+\fIget_vector\fP (0x35),
+\fImkdir\fP (0x39),
+\fIrmdir\fP (0x3a),
+\fIchdir\fP (0x3b),
+\fIcreat\fP (0x3c),
+\fIopen\fP (0x3d),
+\fIclose\fP (0x3e),
+\fIread\fP (0x3f),
+\fIwrite\fP (0x40),
+\fIunlink\fP (0x41),
+\fIlseek\fP (0x42),
+\fIchmod\fP (0x43),
+\fIioctl\fP (0x44),
+\fIdup\fP (0x45),
+\fIdup2\fP (0x46),
+\fIgetcwd\fP (0x47),
+\fIalloc\fP (0x48),
+\fIfree\fP (0x49),
+\fIrealloc\fP (0x4a),
+\fIexec\fP (0x4b),
+\fIexit\fP (0x4c),
+\fIget_code\fP (0x4d),
+\fIfindfirst\fP (0x4e),
+\fIfindnext\fP (0x4f),
+\fIset_psp\fP (0x50),
+\fIget_psp\fP (0x51),
+\fIsysvars\fP (0x52),
+\fIchild_psp\fP (0x55),
+\fIget/set_time\fP (0x57),
+\fIget/set_alloc_str\fP (0x58),
+\fItmpfile\fP (0x5a).
+\fIcreate_new\fP (0x5b).
+\fIget_psp\fP (0x62),
+\fIopen\fP (0x6c),
+Functions not included in
+the above list are printed by default using their function number 
+without their arguments.
+.IP \fB\-b\fP
+Print the interrupt branch address.  Each line is preceded by the address
+on which the MS-DOS interrupt was generated.
+.IP \fB\-c\fP
+Only a summary count of all calls is produced at the end of the program run.
+No detailed information is given.  One line is produced for each function used.
+The line contains the function number in hexadecimal, the symbolic function
+name and the number of times the function was called.
+.IP \fB\-e\fP
+Trace between \fIexec\fP calls.  Unless this option is given,
+monitoring is disabled until the child process terminates,
+when a program performes an \fIexec\fP call .
+.IP \fB\-f\fP
+Calls are prefixed with the MS-DOS function call number.
+.IP \fB\-h\fP
+A short help list on the program options is displayed on the standard output.
+.IP \fB\-i\fP
+Calls are prefixed with the process-id of the process that performed them.  This
+is the PSP address of the program under MS-DOS.
+.IP "\fB\-l\fP \fIL\fP"
+Specify the number of bytes printed for input / output calls.
+Up to \fIL\fP bytes of data will be printed.  The default number is 15.
+.IP \fB\-n\fP
+Functions that are not normally printed are printed by a short descriptive
+name rather than their function number.
+.IP "\fB\-o\fP \fIF\fP"
+The output file for tracing information is \fIF\fP instead of the default
+\fItrace.log\fP.  Note that \fIF\fP can also be a device name such as \fIcon\fP
+or \fIprn\fP.
+.IP "\fB\-p\fP \fIP\fP"
+Trace a process with process-id (PSP address) \fIP\fP.  This is usually
+a terminate and stay resident (TSR) utility.  To obtain the PSP address
+of the program use a memory display utility such as \fIdosmem\fP or
+\fImi\fP or run \fItrace\fP with the \fB-i\fP option.
+.IP \fB\-r\fP
+Produce a register dump on functions that do not have their arguments
+printed.
+.IP \fB\-s\fP
+Print strings on various functions.  The functions affected are:
+.RS
+.IP \(bu 2
+For all input/output functions
+follow the function call with the string that was read or written.  The
+maximum length of the string is specified with the \fB-l\fP option.
+The string is followed by an ellipsis (...) if it contains more characters
+than the maximum length.  The default length is 15 characters.  Non ASCII
+data is not printed unless the \fB-x\fP option is given.
+.IP \(bu
+The \fIioctl\fP calls that get the device mode have it printed as symbolic
+constants.  
+.IP \(bu
+The get and set filemode functions have the file mode printed
+as a string similar to that produced by the Unix \fIls -l\fP command.
+.IP \(bu
+The directory name returned by the \fIget current directory\fP function
+is printed.
+.IP \(bu
+The files returned by the \fIfind first\fP / \fIfind next\fP functions
+are printed together with their associated information.
+.RE
+.IP \fB\-t\fP
+Prefix all system calls with time in the form of hh:mm:ss.
+.IP \fB\-v\fP
+Verbose option.  This option will produce the highest amount of
+data. It is equivalent to specifying the -\fBaefinrstwx\fP options.
+A trace line printed using these options will resemble the following:
+.br
+22:11:56 2c40 40 2C50:4B26 write(1, 3200:923E, 1) = 1	"r"
+.br
+The contents of the line are: the time, PSP address of the calling process,
+function call number, address that generated the function call,
+the function, its arguments, the return value and the string written.
+.IP \fB\-w\fP
+Errors from MS-DOS functions
+are printed in word form (i.e. symbolically) rather than as
+error codes.
+.IP \fB\-x\fP
+Data printed under the -s option will be printed even if it is not ASCII
+in hexadecimal form.
+.IP \fB\-y\fP
+Close log file after every write.
+Useful for debugging programs that crash.
+.SH "SEE ALSO"
+D. Spinellis.  Trace: A tool for logging operating system call transactions.
+\fIOperating Systems Review\fP, 28(4):56-63, October 1994.
+.br
+Ralf Brown and Jim Kyle.  \fIThe PC Interrupt List.\fP  Addison-Wesley, 1991.
+.SH AUTHOR
+(C) Copyright 1991, 1994 Diomidis Spinellis.  All rights reserved.
+.br
+e-mail: dspin@leon.nrcps.ariadne-t.gr
+.br
+snail mail: SENA S.A., Kyprou 27, GR-152 37 Filothei, Greece.
+.SH BUGS
+Most FCB calls and a number of ioctl requests are not decoded.
+.LP
+There should be an option to merge consequentive write(2) requests.
+.LP
+The system call used by \fItrace\fP to get the exit code of the
+process run is also traced.
