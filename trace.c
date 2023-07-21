@@ -32,10 +32,6 @@
 #include <bios.h>
 #include <errno.h>
 
-#ifndef lint
-static char rcsid[] = "$Id: trace.c,v 1.28 1994/10/01 11:32:56 dds Exp $";
-#endif
-
 #define MAXBUFF 1025
 
 /*
@@ -1343,11 +1339,9 @@ main(int argc, char *argv[])
 	int errflag = 0;
 	char *usagestring = "usage: %s [-o fname] [-l len] [-help] [-abcfinrstvwxy] [-p psp] [command options ...]\n";
 	int c;
-	static char revstring[] = "$Revision: 1.28 $", revision[30];
+	static char revision[] = "1.29.0";
 	char *p;
 
-	strcpy(revision, strchr(revstring, ':') + 2);
-	*strchr(revision, '$') = '\0';
 	strlwr(argv[0]);
 	if (p = strrchr(argv[0], '\\'))
 		argv[0] = p + 1;
@@ -1431,7 +1425,7 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'h':			/* Help */
-			fprintf(stdout, "Trace Version %s (C) Copyright 1991-1994 D. Spinellis.  All rights reserved.\n", revision);
+			fprintf(stdout, "Trace Version %s (C) Copyright 1991-2023 D. Spinellis.\n", revision);
 			fprintf(stdout, usagestring, argv[0]);
 			fputs("-a\tTrace all DOS functions\n", stdout);
 			fputs("-b\tPrint interrupt branch address\n", stdout);
